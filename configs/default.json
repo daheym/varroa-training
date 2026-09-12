@@ -1,0 +1,21 @@
+{
+  "images": "data/images",
+  "annotations": "data/annotations",
+  "processed": "data/processed/default",
+  "splits": "data/splits/default.json",
+  "box_size": 32,
+  "tile_size": 640,
+  "overlap": 128,
+  "negative_fraction": 0.25,
+  "val_fraction": 0.25,
+  "seed": 42,
+  "model": "yolo11n.pt",
+  "imgsz": 640,
+  "batch": 2,
+  "epochs": 20,
+  "workers": 0,
+  "confidence": 0.25,
+  "merge_iou": 0.3,
+  "match_radius": 16,
+  "max_det": 3000
+}

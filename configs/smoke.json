@@ -1,0 +1,10 @@
+{
+  "images": "../varroa-labeling/data/images",
+  "annotations": "../varroa-labeling/data/annotations",
+  "processed": "data/processed/smoke",
+  "splits": "data/splits/smoke.json",
+  "imgsz": 320,
+  "epochs": 1,
+  "batch": 2,
+  "workers": 0
+}

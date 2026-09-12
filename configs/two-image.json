@@ -1,0 +1,15 @@
+{
+  "mode": "holdout",
+  "images": "data/images",
+  "annotations": "data/annotations",
+  "model": "yolo11n.pt",
+  "epochs": 100,
+  "imgsz": 640,
+  "batch": 2,
+  "workers": 0,
+  "tile_size": 640,
+  "overlap": 128,
+  "box_size": 32,
+  "negative_fraction": 1.0,
+  "seed": 42
+}

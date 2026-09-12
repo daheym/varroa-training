@@ -1,0 +1,206 @@
+# Varroa training
+
+A small Python 3.12 pipeline for asking whether a pretrained YOLO detector can learn Varroa mites from a few annotated original images. Everything runs locally on CPU. Point-derived boxes are temporary supervision, not measured mite outlines.
+
+## Setup
+
+Run commands from this repository root. On Windows PowerShell:
+
+```powershell
+py -3.12 -m venv .venv
+.\.venv\Scripts\python.exe -m pip install --upgrade pip
+.\.venv\Scripts\python.exe -m pip install torch torchvision --index-url https://download.pytorch.org/whl/cpu
+.\.venv\Scripts\python.exe -m pip install -e ".[dev,export]"
+.\.venv\Scripts\python.exe -m pytest
+```
+
+If Python is managed by uv, use `uv venv --python 3.12 --seed .venv` for the first command. On Linux use `python3.12 -m venv .venv` and `.venv/bin/python`. Activate the environment to use the shorter `python` and `varroa` commands below. Pretrained weights download on the first run; use a local `.pt` path in `model` for offline runs.
+
+The CPU installation follows [PyTorch's installation guidance](https://pytorch.org/get-started/locally/). Training explicitly uses `device="cpu"`, fixed seeds and deterministic algorithms supported by [Ultralytics training](https://docs.ultralytics.com/modes/train/). Exact numerical reproducibility still depends on software versions and hardware; each experiment saves both.
+
+`requirements-cpu-win-py312.txt` pins the tested Windows environment. For the same versions, install its pinned `torch`/`torchvision` from the CPU index first, then run `python -m pip install -r requirements-cpu-win-py312.txt` and `python -m pip install -e ".[dev,export]"`.
+
+## Layout
+
+```text
+data/images/         Input JPEG/PNG originals
+data/annotations/    One JSON per image
+data/processed/      Generated YOLO datasets and tile manifests
+data/splits/         Original-image split manifests
+configs/             JSON configuration files
+models/              Optional local pretrained/exported models
+runs/                Experiments, metrics, weights and predictions
+scripts/             Training, evaluation, inference and export wrappers
+src/dataset/         Validation, geometry, splitting, tiling
+src/training/        CPU training and experiment records
+src/evaluation/      Point matching, image counts, leave-one-out
+src/inference/       Full-image prediction, NMS, visualization, ONNX
+tests/               Synthetic unit and pipeline tests
+```
+
+Data and generated models/runs are excluded from Git.
+
+In this workspace, `data/images` and `data/annotations` are Windows directory junctions to the matching folders in `../varroa-labeling/data`. The default config therefore reads the live labeling inputs. `data/processed` and `data/splits` remain local to this training repository. The junctions are local filesystem setup and are not stored in Git.
+
+## Annotation formats and inspection
+
+The sibling repository `../varroa-labeling` was inspected before finalizing the adapter. Its two initial JSON files have 2 and 8 reviewed points. `configs/labeling.json` reads its `data/images` and `data/annotations` directly without modifying them. Match `<image_id>.json` with `<image_id>.png`, **not** the human-readable `filename` or the `.original` upload. The PNG is already EXIF-oriented by the labeling app. Perspective-corrected images must not be substituted: points are in original, EXIF-oriented coordinates.
+
+The supported labeling document is:
+
+```json
+{
+  "image_id": "example-id",
+  "filename": "original-photo.jpg",
+  "original_width": 4000,
+  "original_height": 3000,
+  "coordinate_space": "original",
+  "perspective": null,
+  "dataset_version": "1",
+  "model_version": null,
+  "annotations": [
+    {"x": 120.5, "y": 85.0, "id": "point-id", "className": "varroa",
+     "source": "human", "confidence": null, "reviewed": true}
+  ],
+  "rejected_predictions": [],
+  "effort": {}
+}
+```
+
+Only reviewed `annotations` become ground truth; unreviewed entries cause an error. Rejected predictions and perspective/effort metadata are not training labels. Unknown document and point fields are rejected to expose schema changes.
+
+For independently collected data, also accepted is `photo.json` alongside `photo.jpg` or `photo.png`:
+
+```json
+{"image": "photo.jpg", "width": 4000, "height": 3000, "points": [{"x": 120.5, "y": 85.0}]}
+```
+
+`image`, `width` and `height` are optional in this compact format. `points` is required, including an explicit empty list for a negative image. All coordinates refer to EXIF-oriented full-resolution pixels, with the top-left at `(0,0)`, `0 <= x < width`, and `0 <= y < height`. Annotations must cover all visible mites: an omitted mite becomes incorrect background supervision.
+
+Validation checks decoding, dimensions, required fields, finite numeric coordinates, bounds, duplicate points/IDs, missing/orphan annotations, duplicate image stems and identical decoded image content. Re-encoded identical pixels cannot cross splits. Similar photographs, bursts or crops are not automatically detected; curate correlated sources together before using this baseline.
+
+## Prepare and train
+
+### Single-image overfit experiment
+
+For exactly one annotated original, run this command from the repository root (no separate preparation step):
+
+```powershell
+.\.venv\Scripts\python.exe -m src.cli --config configs/overfit.json overfit --output runs/single-image
+```
+
+If additional images have been added, explicitly select the annotated original by its filename stem:
+
+```powershell
+.\.venv\Scripts\python.exe -m src.cli --config configs/overfit.json overfit --image-id cea9932e-3b40-4c8c-ad13-8b01f54fc8a7 --output runs/single-image
+```
+
+The selected image and its annotations are validated and captured in the run manifest; other originals are excluded from this experiment.
+
+This uses the linked `data/images` and `data/annotations`, a fresh pretrained `yolo11n.pt`, CPU, 100 epochs, 640-pixel inputs and batch size 2. Edit `configs/overfit.json` to change epochs, input size or pseudo-box size. All positive and negative tiles are retained by this config. Random color and geometric augmentation are disabled for the memorization check. Choose a new output directory for each experiment.
+
+There is **no independent validation set**. The manifest contains one training original and an empty validation split. Ultralytics requires a validation path even with validation disabled, so its internal finalization evaluates training tiles. The experiment uses fixed epochs and `last.pt`, never selects a checkpoint using supposed held-out performance, and computes full-image reconstruction metrics. Both JSON and CLI reports label these as `training_image_reconstruction`; they cannot establish accuracy on unseen images. Ordinary holdout training and leave-one-out still require at least two originals.
+
+Outputs include:
+
+```text
+runs/single-image/config.json                         Resolved run configuration
+runs/single-image/dataset/manifest.json               Source snapshot and tile mapping
+runs/single-image/experiment/yolo/weights/last.pt      Trained checkpoint
+runs/single-image/experiment/evaluation.json          Training-image point/count metrics
+runs/single-image/experiment/reconstruction/*.png     Full-image detection visualization
+runs/single-image/experiment/reconstruction/*.json    Full-image detections and count
+```
+
+Repeat reconstruction with the saved run config:
+
+```powershell
+.\.venv\Scripts\python.exe -m src.cli --config runs/single-image/config.json evaluate --weights runs/single-image/experiment/yolo/weights/last.pt --output runs/single-image/experiment/recheck.json
+```
+
+### Original-image holdout experiment
+
+```powershell
+python -m src.cli --config configs/labeling.json validate
+python -m src.cli --config configs/labeling.json prepare
+python -m src.cli --config configs/labeling.json train --output runs/first
+```
+
+For inputs copied into this repository, use `configs/default.json`. Config paths are relative to your working directory. Copy a config and change `processed` and `splits` when preparing a new variant. Preparation refuses existing output data/split files to prevent stale tiles from contaminating a new experiment. Training also requires a new run directory.
+
+Preparation saves the split **before** creating tiles. Every original belongs to exactly one split. It writes:
+
+```text
+data/processed/labeling/
+  dataset.yaml
+  manifest.json
+  images/train/*.png
+  images/val/*.png
+  labels/train/*.txt
+  labels/val/*.txt
+```
+
+`manifest.json` includes source paths, dimensions, decoded-image and annotation SHA-256 hashes, the annotation points, split membership and the configuration. Every emitted tile records its image/label path, source ID/path, split, top-left `(x,y)`, actual width/height and label count. Local boxes map back by adding `(x,y)`. A source smaller than the tile size remains at its actual size; YOLO handles letterboxing. Edge tiles are anchored to the image boundary, so their overlap may be larger than requested.
+
+| Setting | Default | Meaning |
+| --- | --- | --- |
+| `box_size` | 32 | Square pseudo-box side length in original pixels; clipped at image edges |
+| `tile_size` / `overlap` | 640 / 128 | Square tile side and overlap in pixels, `0 <= overlap < tile_size` |
+| `negative_fraction` | 0.25 | Seeded fraction of available negative training tiles retained per original, rounded up; 0 excludes, 1 keeps all |
+| `val_fraction` / `seed` | 0.25 / 42 | Deterministic original split, with at least one train and one validation original |
+| `model` | `yolo11n.pt` | Small pretrained detector variant or local checkpoint |
+| `imgsz` / `batch` | 640 / 2 | YOLO input size (multiple of 32) and batch size |
+| `epochs` / `workers` | 20 / 0 | Fixed epoch budget; zero workers is Windows-friendly |
+| `confidence` | 0.25 | Inference confidence threshold |
+| `merge_iou` | 0.3 | Tile and global non-maximum suppression threshold |
+| `match_radius` | 16 | Evaluation center-to-point tolerance in original pixels |
+| `max_det` | 3000 | Maximum detections per tile; raise for exceptionally dense tiles |
+
+All positive tiles are retained. Intersecting boxes are clipped into every tile they touch, including boxes whose point is just outside a tile. A tile is negative only if no pseudo-box intersects it. Validation retains **all** negative tiles irrespective of `negative_fraction`, and full-image evaluation always processes every tile. Holdout mode requires at least two originals; overfit mode requires exactly one. Both require positive training supervision.
+
+Use a box size representative of mites at your source resolution. Overlap at least as large as the box size helps edge objects appear fully in another tile. NMS can still leave duplicates with low IoU, or merge nearby mites if boxes are too large. Inspect visualizations before interpreting counts.
+
+Each training run stores `metadata.json`, `metrics.json`, `dataset_manifest.json`, `requirements-freeze.txt`, `evaluation.json` and Ultralytics outputs under `yolo/`, including `weights/best.pt` and `weights/last.pt`. Metadata includes status/failures, timestamps, config, software/hardware information and hashes of initial/final weights and the dataset manifest. Epoch metrics and final original-image metrics are saved as JSON. Seeds are fixed; mosaic/mixup are disabled for the initial small-data baseline. Normal train/validation runs select the best checkpoint using validation performance, so their scores are exploratory validation scores, not independent test results.
+
+## Evaluate and infer
+
+Visualize an existing experiment without retraining or running inference again:
+
+```powershell
+.\.venv\Scripts\python.exe -m src.cli visualize --run runs/single-image/experiment
+```
+
+The `visualizations` folder contains a full-image overlay, paginated close-ups of discrepancies, an `errors.json` with original-pixel coordinates, and training-loss curves. Green boxes are matched predictions, cyan crosses are annotation points, red crosses/circles are unmatched annotations, and orange boxes are unmatched predictions. Matching uses the same one-to-one rule and tolerance as evaluation, with the saved annotation snapshot. The source image hash is checked before rendering. These labels describe agreement with annotations; inspect close-ups for annotation mistakes as well as model errors.
+
+For overfit runs, Ultralytics' epoch validation is disabled: zeros in intermediate validation columns are placeholders, not measured zero accuracy. The plots therefore show training losses, not misleading validation curves. Falling loss and strong reconstruction scores demonstrate learning on the training image, not generalization.
+
+```powershell
+python -m src.cli --config configs/labeling.json evaluate --weights runs/first/yolo/weights/best.pt --output runs/first/recheck.json
+python -m src.cli --config configs/labeling.json infer --weights runs/first/yolo/weights/best.pt --image ../varroa-labeling/data/images/5102ef6f-7636-4774-b6c9-71a6d0e692a2.png --output runs/first/prediction
+```
+
+Inference visits every tile, maps boxes to original coordinates and applies confidence-ordered global IoU NMS. It prints the final mite count and writes `<output>.json` plus a full-resolution `<output>.png` visualization. Output coordinates and visualization use EXIF-oriented source pixels.
+
+Evaluation runs this same full-image pipeline on validation originals. It matches predicted box centers to annotated points within `match_radius`, one-to-one, maximizing valid matches then minimizing distance. Reports contain TP/FP/FN, precision, recall, F1, true/predicted counts, signed counting error (`predicted - true`) and absolute error per original. Aggregates use micro precision/recall/F1 and count MAE, RMSE and bias. Undefined precision/recall/F1 are reported as zero, including empty/empty cases; counting error is then zero. Full-image point metrics are separate from Ultralytics' tile pseudo-box mAP metrics. Evaluation uses the annotation snapshot saved during preparation and rejects changed source pixels.
+
+## Leave-one-original-image-out
+
+```powershell
+python -m src.cli --config configs/labeling.json loo --output runs/loo-first
+```
+
+Each fold prepares a fresh dataset and initializes a fresh model from `model`. One original is held out, fixed epochs are used, early stopping is disabled, and `last.pt` is evaluated. The outer held-out image is excluded from Ultralytics' training/validation data configuration; any internal finalization metrics on the training set are not held-out results. Every original contributes once to `runs/loo-first/evaluation.json`; partial completion is recorded in `progress.json`. Avoid tuning thresholds/epochs on these same held-out results if you need an unbiased final estimate. A fold with no training positives fails explicitly.
+
+## ONNX
+
+```powershell
+python -m src.cli --config configs/labeling.json export --weights runs/first/yolo/weights/best.pt
+```
+
+Exports static batch-one float32 ONNX, opset 17, without embedded NMS, next to the checkpoint. The script checks the graph and writes an adjacent JSON describing preprocessing and weights. This follows [Ultralytics ONNX export options](https://docs.ultralytics.com/modes/export/). A future browser client still needs RGB conversion, aspect-preserving letterboxing, normalization, output decoding, filtering, tile mapping and NMS; this repository does not implement the browser client. Output tensor layouts can differ between configured model variants, so inspect the exported graph when integrating.
+
+## First experiment
+
+`configs/smoke.json` uses the sibling dataset, one epoch and 320-pixel input for a quick integration check. Run its `validate`, `prepare`, and `train` commands with a fresh output directory. One epoch on a few source images establishes execution, not detection quality.
+
+For the learning experiment, inspect source annotation completeness and pseudo-box sizes, then run a fixed 20-epoch leave-one-out protocol. Review false positives, missed mites, counts and visualizations alongside metrics, and compare count error against a trivial zero-count baseline. The pretrained COCO model has no Varroa class; transfer learning replaces its detection head. With only two initial images, estimates will be highly variable; collect more independent sources before claiming generalization.
