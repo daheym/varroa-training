@@ -11,6 +11,7 @@ from matplotlib.patches import Rectangle
 from PIL import Image, ImageOps
 
 from src.config import write_json
+from src.dataset.perspective import normalize_image
 from src.evaluation.metrics import match_detections
 
 
@@ -77,6 +78,8 @@ def visualize_run(run):
         digest = hashlib.sha256(str(image.size).encode() + image.tobytes()).hexdigest()
         if digest != record["sha256"]:
             raise ValueError(f"Source image changed since training: {record['id']}")
+        if record.get("perspective"):
+            image = normalize_image(image, record["perspective"])
         points, detections = record["points"], result["detections"]
         matching = match_detections(points, detections, report["match_radius"])
         if (len(matching["matches"]), len(matching["extra"]), len(matching["missed"])) != (result["tp"], result["fp"], result["fn"]):

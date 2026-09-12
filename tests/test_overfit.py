@@ -17,7 +17,7 @@ def single_image(tmp_path):
     annotations.mkdir()
     Image.new("RGB", (30, 20), color="gray").save(images / "single.png")
     (annotations / "single.json").write_text('{"points": [{"x": 5, "y": 5}]}')
-    return Config(mode="overfit", images=images, annotations=annotations, processed=tmp_path / "dataset",
+    return Config(allow_legacy_original=True, mode="overfit", images=images, annotations=annotations, processed=tmp_path / "dataset",
                   splits=tmp_path / "split.json", tile_size=10, overlap=2, box_size=4, negative_fraction=1)
 
 
@@ -59,7 +59,7 @@ def test_evaluation_uses_training_original_and_labels_results(single_image, monk
     manifest = prepare(single_image)
     seen = []
 
-    def fake_predict(model, image_path, config):
+    def fake_predict(model, image_path, config, perspective=None):
         seen.append(image_path)
         return {"image": image_path, "count": 1, "detections": [{"box": (3, 3, 7, 7), "confidence": .9}]}
 

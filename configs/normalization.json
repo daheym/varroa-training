@@ -1,0 +1,8 @@
+{
+  "pixels_per_mm": 16,
+  "min_source_scale_ratio": 0.75,
+  "quality_policy": "warn",
+  "board_profiles": {
+    "standard": {"physical_width_mm": 284, "physical_height_mm": 346}
+  }
+}

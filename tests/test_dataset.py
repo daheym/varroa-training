@@ -16,7 +16,7 @@ def dataset(tmp_path):
     for i in range(3):
         Image.new("RGB", (30, 20), color=(i * 50, 20, 30)).save(images / f"{i}.png")
         (annotations / f"{i}.json").write_text(json.dumps({"width": 30, "height": 20, "points": [{"x": 5, "y": 5}]}))
-    return Config(images=images, annotations=annotations, processed=tmp_path / "processed", splits=tmp_path / "splits.json",
+    return Config(allow_legacy_original=True, images=images, annotations=annotations, processed=tmp_path / "processed", splits=tmp_path / "splits.json",
                   tile_size=10, overlap=2, box_size=4, negative_fraction=0)
 
 
@@ -41,7 +41,7 @@ def test_prepare_has_no_original_leakage_and_preserves_mapping(dataset):
 
 
 def test_reproducible_splits_and_leave_one_out(dataset):
-    records = validate_dataset(dataset.images, dataset.annotations)
+    records = validate_dataset(dataset.images, dataset.annotations, config=dataset)
     assert split_originals(records) == split_originals(list(reversed(records)))
     held_out_ids = []
     for record in records:
@@ -69,21 +69,21 @@ def test_validation_rejects_bad_annotations(dataset, change, match):
     annotation.update(change)
     path.write_text(json.dumps(annotation))
     with pytest.raises(ValueError, match=match):
-        validate_dataset(dataset.images, dataset.annotations)
+        validate_dataset(dataset.images, dataset.annotations, config=dataset)
 
 
 def test_missing_annotation_and_corrupt_image(dataset):
     (dataset.annotations / "0.json").unlink()
     (dataset.images / "1.png").write_bytes(b"not an image")
     with pytest.raises(ValueError) as exc:
-        validate_dataset(dataset.images, dataset.annotations)
+        validate_dataset(dataset.images, dataset.annotations, config=dataset)
     assert "0.png" in str(exc.value) and "1.png" in str(exc.value)
 
 
 def test_duplicate_images_rejected(dataset):
     (dataset.images / "1.png").write_bytes((dataset.images / "0.png").read_bytes())
     with pytest.raises(ValueError, match="duplicate decoded"):
-        validate_dataset(dataset.images, dataset.annotations)
+        validate_dataset(dataset.images, dataset.annotations, config=dataset)
 
 
 def test_labeling_schema_and_review_gate(dataset):
@@ -93,11 +93,11 @@ def test_labeling_schema_and_review_gate(dataset):
                {"x": 5, "y": 5, "id": "a", "className": "varroa", "source": "human", "reviewed": True}],
            "rejected_predictions": []}
     path.write_text(json.dumps(doc))
-    assert len(validate_dataset(dataset.images, dataset.annotations)) == 3
+    assert len(validate_dataset(dataset.images, dataset.annotations, config=dataset)) == 3
     doc["annotations"][0]["reviewed"] = False
     path.write_text(json.dumps(doc))
     with pytest.raises(ValueError, match="Review all"):
-        validate_dataset(dataset.images, dataset.annotations)
+        validate_dataset(dataset.images, dataset.annotations, config=dataset)
 
 
 def test_all_negative_tiles_can_be_included(dataset):

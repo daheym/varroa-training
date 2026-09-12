@@ -44,7 +44,7 @@ In this workspace, `data/images` and `data/annotations` are Windows directory ju
 
 ## Annotation formats and inspection
 
-The sibling repository `../varroa-labeling` was inspected before finalizing the adapter. Its two initial JSON files have 2 and 8 reviewed points. `configs/labeling.json` reads its `data/images` and `data/annotations` directly without modifying them. Match `<image_id>.json` with `<image_id>.png`, **not** the human-readable `filename` or the `.original` upload. The PNG is already EXIF-oriented by the labeling app. Perspective-corrected images must not be substituted: points are in original, EXIF-oriented coordinates.
+The sibling repository `../varroa-labeling` was inspected before finalizing the adapter. Its two initial JSON files have 2 and 8 reviewed points. `configs/labeling.json` reads its `data/images` and `data/annotations` directly without modifying them. Match `<image_id>.json` with `<image_id>.png`, **not** the human-readable `filename` or the `.original` upload. The PNG is already EXIF-oriented by the labeling app. Keep the original PNG as input: preprocessing uses physical perspective metadata to normalize it before tiling. Original-space legacy points are converted; canonical points are validated against the transform. See [the physical normalization contract](PERSPECTIVE.md).
 
 The supported labeling document is:
 
@@ -67,7 +67,7 @@ The supported labeling document is:
 }
 ```
 
-Only reviewed `annotations` become ground truth; unreviewed entries cause an error. Rejected predictions and perspective/effort metadata are not training labels. Unknown document and point fields are rejected to expose schema changes.
+Only reviewed `annotations` become ground truth; unreviewed entries cause an error. Rejected predictions and effort metadata are not training labels. Perspective metadata defines the canonical raster and physical scale. Unknown document and point fields are rejected to expose schema changes.
 
 For independently collected data, also accepted is `photo.json` alongside `photo.jpg` or `photo.png`:
 
@@ -75,7 +75,7 @@ For independently collected data, also accepted is `photo.json` alongside `photo
 {"image": "photo.jpg", "width": 4000, "height": 3000, "points": [{"x": 120.5, "y": 85.0}]}
 ```
 
-`image`, `width` and `height` are optional in this compact format. `points` is required, including an explicit empty list for a negative image. All coordinates refer to EXIF-oriented full-resolution pixels, with the top-left at `(0,0)`, `0 <= x < width`, and `0 <= y < height`. Annotations must cover all visible mites: an omitted mite becomes incorrect background supervision.
+`image`, `width` and `height` are optional in this compact format. `points` is required, including an explicit empty list for a negative image. The legacy example above requires explicit `allow_legacy_original: true` and its coordinates refer to EXIF-oriented full-resolution pixels, with the top-left at `(0,0)`, `0 <= x < width`, and `0 <= y < height`. Annotations must cover all visible mites: an omitted mite becomes incorrect background supervision.
 
 Validation checks decoding, dimensions, required fields, finite numeric coordinates, bounds, duplicate points/IDs, missing/orphan annotations, duplicate image stems and identical decoded image content. Re-encoded identical pixels cannot cross splits. Similar photographs, bursts or crops are not automatically detected; curate correlated sources together before using this baseline.
 
@@ -144,7 +144,7 @@ data/processed/labeling/
 
 | Setting | Default | Meaning |
 | --- | --- | --- |
-| `box_size` | 32 | Square pseudo-box side length in original pixels; clipped at image edges |
+| `box_size` | 32 | Square pseudo-box side length in canonical pixels; clipped at image edges |
 | `tile_size` / `overlap` | 640 / 128 | Square tile side and overlap in pixels, `0 <= overlap < tile_size` |
 | `negative_fraction` | 0.25 | Seeded fraction of available negative training tiles retained per original, rounded up; 0 excludes, 1 keeps all |
 | `val_fraction` / `seed` | 0.25 / 42 | Deterministic original split, with at least one train and one validation original |
@@ -153,14 +153,14 @@ data/processed/labeling/
 | `epochs` / `workers` | 20 / 0 | Fixed epoch budget; zero workers is Windows-friendly |
 | `confidence` | 0.25 | Inference confidence threshold |
 | `merge_iou` | 0.3 | Tile and global non-maximum suppression threshold |
-| `match_radius` | 16 | Evaluation center-to-point tolerance in original pixels |
+| `match_radius` | 16 | Evaluation center-to-point tolerance in canonical pixels |
 | `max_det` | 3000 | Maximum detections per tile; raise for exceptionally dense tiles |
 
 All positive tiles are retained. Intersecting boxes are clipped into every tile they touch, including boxes whose point is just outside a tile. A tile is negative only if no pseudo-box intersects it. Validation retains **all** negative tiles irrespective of `negative_fraction`, and full-image evaluation always processes every tile. Holdout mode requires at least two originals; overfit mode requires exactly one. Both require positive training supervision.
 
 Use a box size representative of mites at your source resolution. Overlap at least as large as the box size helps edge objects appear fully in another tile. NMS can still leave duplicates with low IoU, or merge nearby mites if boxes are too large. Inspect visualizations before interpreting counts.
 
-Each training run stores `metadata.json`, `metrics.json`, `dataset_manifest.json`, `requirements-freeze.txt`, `evaluation.json` and Ultralytics outputs under `yolo/`, including `weights/best.pt` and `weights/last.pt`. Metadata includes status/failures, timestamps, config, software/hardware information and hashes of initial/final weights and the dataset manifest. Epoch metrics and final original-image metrics are saved as JSON. Seeds are fixed; mosaic/mixup are disabled for the initial small-data baseline. Normal train/validation runs select the best checkpoint using validation performance, so their scores are exploratory validation scores, not independent test results.
+Each training run stores `metadata.json`, `metrics.json`, `dataset_manifest.json`, `requirements-freeze.txt`, `evaluation.json` and Ultralytics outputs under `yolo/`, including `weights/best.pt` and `weights/last.pt`. Metadata includes status/failures, timestamps, config, software/hardware information and hashes of initial/final weights and the dataset manifest. Epoch metrics and final canonical-image metrics are saved as JSON. Seeds are fixed; mosaic/mixup are disabled for the initial small-data baseline. Normal train/validation runs select the best checkpoint using validation performance, so their scores are exploratory validation scores, not independent test results.
 
 ## Evaluate and infer
 
@@ -170,16 +170,16 @@ Visualize an existing experiment without retraining or running inference again:
 .\.venv\Scripts\python.exe -m src.cli visualize --run runs/single-image/experiment
 ```
 
-The `visualizations` folder contains a full-image overlay, paginated close-ups of discrepancies, an `errors.json` with original-pixel coordinates, and training-loss curves. Green boxes are matched predictions, cyan crosses are annotation points, red crosses/circles are unmatched annotations, and orange boxes are unmatched predictions. Matching uses the same one-to-one rule and tolerance as evaluation, with the saved annotation snapshot. The source image hash is checked before rendering. These labels describe agreement with annotations; inspect close-ups for annotation mistakes as well as model errors.
+The `visualizations` folder contains a full-image overlay, paginated close-ups of discrepancies, an `errors.json` with canonical-pixel coordinates, and training-loss curves. Green boxes are matched predictions, cyan crosses are annotation points, red crosses/circles are unmatched annotations, and orange boxes are unmatched predictions. Matching uses the same one-to-one rule and tolerance as evaluation, with the saved annotation snapshot. The source image hash is checked before rendering. These labels describe agreement with annotations; inspect close-ups for annotation mistakes as well as model errors.
 
 For overfit runs, Ultralytics' epoch validation is disabled: zeros in intermediate validation columns are placeholders, not measured zero accuracy. The plots therefore show training losses, not misleading validation curves. Falling loss and strong reconstruction scores demonstrate learning on the training image, not generalization.
 
 ```powershell
 python -m src.cli --config configs/labeling.json evaluate --weights runs/first/yolo/weights/best.pt --output runs/first/recheck.json
-python -m src.cli --config configs/labeling.json infer --weights runs/first/yolo/weights/best.pt --image ../varroa-labeling/data/images/5102ef6f-7636-4774-b6c9-71a6d0e692a2.png --output runs/first/prediction
+python -m src.cli --config configs/labeling.json infer --weights runs/first/yolo/weights/best.pt --image ../varroa-labeling/data/images/5102ef6f-7636-4774-b6c9-71a6d0e692a2.png --perspective ../varroa-labeling/data/annotations/5102ef6f-7636-4774-b6c9-71a6d0e692a2.json --output runs/first/prediction
 ```
 
-Inference visits every tile, maps boxes to original coordinates and applies confidence-ordered global IoU NMS. It prints the final mite count and writes `<output>.json` plus a full-resolution `<output>.png` visualization. Output coordinates and visualization use EXIF-oriented source pixels.
+Inference first normalizes the selected physical region, visits every canonical tile, maps boxes to canonical coordinates and applies confidence-ordered global IoU NMS. It prints the final mite count and writes `<output>.json` plus a full-resolution `<output>.png` visualization. Output coordinates and visualization use canonical pixels; inverse-transformed original polygons are included separately. A matching weight preprocessing sidecar is required.
 
 Evaluation runs this same full-image pipeline on validation originals. It matches predicted box centers to annotated points within `match_radius`, one-to-one, maximizing valid matches then minimizing distance. Reports contain TP/FP/FN, precision, recall, F1, true/predicted counts, signed counting error (`predicted - true`) and absolute error per original. Aggregates use micro precision/recall/F1 and count MAE, RMSE and bias. Undefined precision/recall/F1 are reported as zero, including empty/empty cases; counting error is then zero. Full-image point metrics are separate from Ultralytics' tile pseudo-box mAP metrics. Evaluation uses the annotation snapshot saved during preparation and rejects changed source pixels.
 
@@ -204,3 +204,7 @@ Exports static batch-one float32 ONNX, opset 17, without embedded NMS, next to t
 `configs/smoke.json` uses the sibling dataset, one epoch and 320-pixel input for a quick integration check. Run its `validate`, `prepare`, and `train` commands with a fresh output directory. One epoch on a few source images establishes execution, not detection quality.
 
 For the learning experiment, inspect source annotation completeness and pseudo-box sizes, then run a fixed 20-epoch leave-one-out protocol. Review false positives, missed mites, counts and visualizations alongside metrics, and compare count error against a trivial zero-count baseline. The pretrained COCO model has no Varroa class; transfer learning replaces its detection head. With only two initial images, estimates will be highly variable; collect more independent sources before claiming generalization.
+
+## Physical-scale preprocessing
+
+Default preparation requires per-image physical dimensions and perspective metadata. The legacy JSON examples above describe compatibility inputs, not physically normalized training data. Use the annotation tool to migrate them first. `configs/normalization.json` defines 8 pixels/mm by default, warning below 75% source resolution; `quality_policy: "error"` rejects low-resolution inputs. Board dimensions vary per image. `box_size_mm` overrides `box_size` with a physical pseudo-box size. Tiles remain fixed in pixels; small boards use blank padding. See [PERSPECTIVE.md](PERSPECTIVE.md) for the full reproducible algorithm, migration, quality checks and model/PWA contract.

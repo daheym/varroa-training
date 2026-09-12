@@ -21,7 +21,7 @@ def test_training_cpu_and_checkpoint_protocol(tmp_path, monkeypatch, held_out, m
     for i in range(1 if mode == "overfit" else 2):
         Image.new("RGB", (20, 20), color=(i, 0, 0)).save(images / f"{i}.png")
         (annotations / f"{i}.json").write_text('{"points": [{"x": 5, "y": 5}]}')
-    config = Config(mode=mode, images=images, annotations=annotations, processed=tmp_path / "data", splits=tmp_path / "split.json")
+    config = Config(allow_legacy_original=True, mode=mode, images=images, annotations=annotations, processed=tmp_path / "data", splits=tmp_path / "split.json")
     prepare(config)
     calls = []
 
@@ -65,8 +65,8 @@ def test_changed_source_during_prepare_is_rejected(tmp_path):
     for i in range(2):
         Image.new("RGB", (20, 20), color=(i, 0, 0)).save(images / f"{i}.png")
         (annotations / f"{i}.json").write_text('{"points": [{"x": 5, "y": 5}]}')
-    config = Config(images=images, annotations=annotations, processed=tmp_path / "data", splits=tmp_path / "split.json")
-    records = validate_dataset(images, annotations)
+    config = Config(allow_legacy_original=True, images=images, annotations=annotations, processed=tmp_path / "data", splits=tmp_path / "split.json")
+    records = validate_dataset(images, annotations, config=config)
     Image.new("RGB", (20, 20), color="red").save(images / "0.png")
     with pytest.raises(ValueError, match="changed during preparation"):
         prepare(config, records=records)

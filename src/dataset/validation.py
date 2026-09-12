@@ -5,6 +5,8 @@ from typing import Literal
 
 from PIL import Image, ImageOps
 from pydantic import BaseModel, ConfigDict, Field
+from src.config import Config
+from src.dataset.perspective import resolve_metadata, transform_points
 
 
 class Point(BaseModel):
@@ -19,6 +21,8 @@ class Annotation(BaseModel):
     width: int | None = Field(default=None, gt=0)
     height: int | None = Field(default=None, gt=0)
     points: list[Point]
+    coordinate_space: Literal['original', 'canonical'] = 'original'
+    perspective: dict | None = None
 
 
 class LabelingPoint(Point):
@@ -35,7 +39,7 @@ class LabelingDocument(BaseModel):
     filename: str
     original_width: int = Field(gt=0)
     original_height: int = Field(gt=0)
-    coordinate_space: Literal["original"]
+    coordinate_space: Literal["original", "canonical"]
     perspective: dict | None = None
     dataset_version: str
     model_version: str | None = None
@@ -56,12 +60,14 @@ def load_annotation(path, image_path):
         if len({p.id for p in doc.annotations}) != len(doc.annotations):
             raise ValueError("duplicate annotation IDs")
         return Annotation(width=doc.original_width, height=doc.original_height,
+                          coordinate_space=doc.coordinate_space, perspective=doc.perspective,
                           points=[Point(x=p.x, y=p.y) for p in doc.annotations])
     return Annotation.model_validate_json(raw)
 
 
-def validate_dataset(images: Path, annotations: Path, image_id: str | None = None):
+def validate_dataset(images: Path, annotations: Path, image_id: str | None = None, config=None):
     """Collect all errors; never silently treat missing annotations as negatives."""
+    config = config or Config()
     records, errors = [], []
     files = sorted(p for p in images.iterdir() if p.suffix.lower() in {".jpg", ".jpeg", ".png"}) if images.is_dir() else []
     if image_id is not None:
@@ -92,11 +98,33 @@ def validate_dataset(images: Path, annotations: Path, image_id: str | None = Non
             if (ann.width is not None and ann.width != width) or (ann.height is not None and ann.height != height):
                 raise ValueError("annotation dimensions differ from image")
             points = [(p.x, p.y) for p in ann.points]
+            original_width, original_height = width, height
+            perspective = None
+            if ann.perspective is not None:
+                perspective = resolve_metadata(ann.perspective, width, height, config.pixels_per_mm,
+                    config.min_source_scale_ratio, config.quality_policy)
+                if ann.coordinate_space == 'original':
+                    points = [tuple(p) for p in transform_points(points, perspective['homography'])]
+                else:
+                    # Canonical points must refer to this exact geometry, never guessed.
+                    import numpy as np
+                    if (ann.perspective.get('version') != 1 or
+                        ann.perspective.get('output_width') != perspective['output_width'] or
+                        ann.perspective.get('output_height') != perspective['output_height'] or
+                        not isinstance(ann.perspective.get('homography'), list) or
+                        np.shape(ann.perspective['homography']) != (3,3) or
+                        not np.allclose(ann.perspective['homography'], perspective['homography'], rtol=1e-9, atol=1e-9)):
+                        raise ValueError('Canonical annotation transform differs; migrate explicitly')
+                width, height = perspective['output_width'], perspective['output_height']
+            elif ann.coordinate_space == 'canonical' or not config.allow_legacy_original:
+                raise ValueError('Physical perspective region required; legacy original compatibility must be explicit')
             if len(set(points)) != len(points):
                 raise ValueError("duplicate annotation points")
             if any(not (0 <= x < width and 0 <= y < height) for x, y in points):
                 raise ValueError("point outside image bounds")
             records.append(dict(id=path.stem, image=str(path.resolve()), annotation=str(ann_path.resolve()),
+                                original_width=original_width, original_height=original_height,
+                                perspective=perspective, coordinate_space='canonical' if perspective else 'original',
                                 width=width, height=height, points=points, sha256=digest,
                                 annotation_sha256=hashlib.sha256(ann_path.read_bytes()).hexdigest()))
         except (ValueError, OSError, SyntaxError) as exc:

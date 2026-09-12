@@ -14,6 +14,7 @@ import yaml
 from src.config import write_json
 from src.dataset.prepare import check_splits
 from src.evaluation.evaluate import evaluate
+from src.inference.contract import preprocessing_contract
 
 
 def sha256(path):
@@ -38,7 +39,7 @@ def train(config, output, held_out_evaluation=False):
         raise ValueError("Overfit mode cannot perform held-out evaluation")
     check_splits(manifest["splits"], manifest["sources"], config.mode)
     evaluation_scope = "training_image_reconstruction" if overfit else "held_out_originals"
-    for key in ("box_size", "tile_size", "overlap", "negative_fraction", "seed"):
+    for key in ("box_size", "tile_size", "overlap", "negative_fraction", "seed", "pixels_per_mm", "box_size_mm", "min_source_scale_ratio", "quality_policy", "allow_legacy_original"):
         if manifest["config"][key] != config.model_dump(mode="json")[key]:
             raise ValueError(f"Prepared dataset config differs: {key}")
     output.mkdir(parents=True, exist_ok=False)
@@ -73,7 +74,7 @@ def train(config, output, held_out_evaluation=False):
         if initial_path.is_file():
             metadata["initial_weights_sha256"] = sha256(initial_path)
         augmentation = dict(hsv_h=0.0, hsv_s=0.0, hsv_v=0.0, translate=0.0, scale=0.0,
-                            fliplr=0.0, flipud=0.0, degrees=0.0, shear=0.0, perspective=0.0) if overfit else {}
+                            fliplr=0.0, flipud=0.0, degrees=0.0, shear=0.0, perspective=0.0) if overfit else dict(scale=0.0, degrees=0.0, shear=0.0, perspective=0.0)
         model.train(data=str(data_path), device="cpu",
                     imgsz=config.imgsz, batch=config.batch, epochs=config.epochs, workers=config.workers,
                     seed=config.seed, deterministic=True, pretrained=True, amp=False,
@@ -82,6 +83,8 @@ def train(config, output, held_out_evaluation=False):
                     val=not (held_out_evaluation or overfit), patience=0, plots=False, save=True,
                     mosaic=0.0, mixup=0.0, erasing=0.0, max_det=config.max_det, **augmentation)
         checkpoint = output / "yolo" / "weights" / ("last.pt" if held_out_evaluation or overfit else "best.pt")
+        for weights in checkpoint.parent.glob('*.pt'):
+            write_json(weights.with_suffix('.preprocessing.json'), preprocessing_contract(config))
         report = evaluate(YOLO(str(checkpoint)), manifest, config, output / "evaluation.json")
         history_path = output / "yolo" / "results.csv"
         history = []

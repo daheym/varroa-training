@@ -32,7 +32,7 @@ def test_tiled_inference_maps_and_merges(tmp_path):
             return [SimpleNamespace(boxes=SimpleNamespace(xyxy=FakeTensor([box]), conf=FakeTensor([.9])))]
 
     model = Model()
-    result = predict_image(model, path, Config(tile_size=10, overlap=5))
+    result = predict_image(model, path, Config(allow_legacy_original=True, tile_size=10, overlap=5))
     assert model.calls == 2 and result["count"] == 1
     assert result["detections"][0]["box"] == (6, 2, 9, 5)
     save_prediction(result, tmp_path / "output")

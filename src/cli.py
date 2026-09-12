@@ -24,6 +24,7 @@ def main(argv=None):
     sub = commands.add_parser("infer")
     sub.add_argument("--weights", required=True, type=Path)
     sub.add_argument("--image", required=True, type=Path)
+    sub.add_argument("--perspective", type=Path, help="Annotation document or physical perspective JSON")
     sub.add_argument("--output", required=True, type=Path, help="Output filename stem for JSON and PNG")
     sub = commands.add_parser("export")
     sub.add_argument("--weights", required=True, type=Path)
@@ -36,7 +37,7 @@ def main(argv=None):
     config = read_config(args.config)
     if args.command == "validate":
         from src.dataset.validation import validate_dataset
-        records = validate_dataset(config.images, config.annotations)
+        records = validate_dataset(config.images, config.annotations, config=config)
         print(json.dumps({"images": len(records), "points": sum(len(r["points"]) for r in records)}, indent=2))
     elif args.command == "prepare":
         from src.dataset.prepare import prepare
@@ -59,6 +60,8 @@ def main(argv=None):
         print(export_onnx(args.weights, config.imgsz))
     else:
         from ultralytics import YOLO
+        from src.inference.contract import check_model_contract
+        check_model_contract(args.weights, config)
         model = YOLO(str(args.weights))
         if args.command == "evaluate":
             from src.evaluation.evaluate import evaluate
@@ -67,7 +70,10 @@ def main(argv=None):
             print(json.dumps({"evaluation_scope": report["evaluation_scope"], **report["aggregate"]}, indent=2))
         else:
             from src.inference.predict import predict_image, save_prediction
-            prediction = predict_image(model, args.image, config)
+            metadata = json.loads(args.perspective.read_text('utf-8')) if args.perspective else None
+            if metadata and 'perspective' in metadata:
+                metadata = metadata['perspective']
+            prediction = predict_image(model, args.image, config, perspective=metadata)
             prediction["weights"] = str(args.weights.resolve())
             save_prediction(prediction, args.output)
             print(f"Mite count: {prediction['count']}")

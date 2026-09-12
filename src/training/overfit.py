@@ -13,7 +13,7 @@ def overfit_image(config, output, image_id=None):
         raise ValueError(f"Experiment directory already exists: {output}. Choose a new output path.")
     config = config.model_copy(update={"mode": "overfit", "processed": output / "dataset",
                                        "splits": output / "split.json"})
-    records = validate_dataset(config.images, config.annotations, image_id=image_id)
+    records = validate_dataset(config.images, config.annotations, image_id=image_id, config=config)
     prepare(config, records=records)
     write_json(output / "config.json", config.model_dump(mode="json"))
     return train(config, output / "experiment")

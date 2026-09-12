@@ -13,6 +13,11 @@ class Config(BaseModel):
     processed: Path = Path("data/processed/default")
     splits: Path = Path("data/splits/default.json")
     box_size: float = Field(default=32, gt=0)
+    box_size_mm: float | None = Field(default=None, gt=0)
+    pixels_per_mm: float = Field(default=8, gt=0)
+    min_source_scale_ratio: float = Field(default=.75, gt=0, le=1)
+    quality_policy: Literal['warn', 'error'] = 'warn'
+    allow_legacy_original: bool = False
     tile_size: int = Field(default=640, gt=0)
     overlap: int = Field(default=128, ge=0)
     negative_fraction: float = Field(default=0.25, ge=0, le=1)
@@ -36,7 +41,9 @@ class Config(BaseModel):
 
 
 def read_config(path):
-    return Config.model_validate_json(Path(path).read_text(encoding="utf-8"))
+    payload = json.loads(Path(path).read_text(encoding="utf-8"))
+    shared = json.loads((Path(__file__).resolve().parents[1] / 'configs' / 'normalization.json').read_text('utf-8'))
+    return Config.model_validate({**{k: shared[k] for k in ('pixels_per_mm', 'min_source_scale_ratio', 'quality_policy')}, **payload})
 
 
 def write_json(path, value):

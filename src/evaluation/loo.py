@@ -11,7 +11,7 @@ def leave_one_out(config, output):
     if config.mode != "holdout":
         raise ValueError("Leave-one-out requires holdout mode")
     output = Path(output).resolve()
-    records = validate_dataset(config.images, config.annotations)
+    records = validate_dataset(config.images, config.annotations, config=config)
     if len(records) < 2:
         raise ValueError("Leave-one-out requires at least two original images")
     output.mkdir(parents=True, exist_ok=False)
