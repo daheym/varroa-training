@@ -208,3 +208,8 @@ For the learning experiment, inspect source annotation completeness and pseudo-b
 ## Physical-scale preprocessing
 
 Default preparation requires per-image physical dimensions and perspective metadata. The legacy JSON examples above describe compatibility inputs, not physically normalized training data. Use the annotation tool to migrate them first. `configs/normalization.json` defines 8 pixels/mm by default, warning below 75% source resolution; `quality_policy: "error"` rejects low-resolution inputs. Board dimensions vary per image. `box_size_mm` overrides `box_size` with a physical pseudo-box size. Tiles remain fixed in pixels; small boards use blank padding. See [PERSPECTIVE.md](PERSPECTIVE.md) for the full reproducible algorithm, migration, quality checks and model/PWA contract.
+
+## Active-learning interchange
+
+Export reviewed datasets and exchange model predictions through portable or linked directories.
+See [the end-to-end workflow](docs/active-learning.md), [v1 JSON Schema](schemas/varroa-annotation-v1.schema.json), and [example files](examples/interchange).

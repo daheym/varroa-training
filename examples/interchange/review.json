@@ -1,0 +1,10 @@
+{
+  "schema_version": "1.0",
+  "image_id": "image_001",
+  "model_predictions": 3,
+  "accepted_unchanged": 1,
+  "corrected": 1,
+  "rejected": 1,
+  "manually_added": 1,
+  "final_reviewed_mite_count": 3
+}

@@ -1,0 +1,382 @@
+{
+  "$defs": {
+    "AnnotationFile": {
+      "additionalProperties": false,
+      "properties": {
+        "schema_version": {
+          "const": "1.0",
+          "title": "Schema Version",
+          "type": "string"
+        },
+        "image": {
+          "$ref": "#/$defs/ImageInfo"
+        },
+        "perspective": {
+          "anyOf": [
+            {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Perspective"
+        },
+        "annotations": {
+          "items": {
+            "$ref": "#/$defs/Mite"
+          },
+          "title": "Annotations",
+          "type": "array"
+        }
+      },
+      "required": [
+        "schema_version",
+        "image",
+        "perspective",
+        "annotations"
+      ],
+      "title": "AnnotationFile",
+      "type": "object"
+    },
+    "Box": {
+      "additionalProperties": false,
+      "properties": {
+        "x": {
+          "minimum": 0,
+          "title": "X",
+          "type": "number"
+        },
+        "y": {
+          "minimum": 0,
+          "title": "Y",
+          "type": "number"
+        },
+        "width": {
+          "exclusiveMinimum": 0,
+          "title": "Width",
+          "type": "number"
+        },
+        "height": {
+          "exclusiveMinimum": 0,
+          "title": "Height",
+          "type": "number"
+        }
+      },
+      "required": [
+        "x",
+        "y",
+        "width",
+        "height"
+      ],
+      "title": "Box",
+      "type": "object"
+    },
+    "Entry": {
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "pattern": "^[A-Za-z0-9_-]+$",
+          "title": "Id",
+          "type": "string"
+        },
+        "filename": {
+          "pattern": "^[^/\\\\:]+\\.(jpg|jpeg|png|JPG|JPEG|PNG)$",
+          "title": "Filename",
+          "type": "string"
+        },
+        "annotation_file": {
+          "pattern": "^[A-Za-z0-9_-]+\\.json$",
+          "title": "Annotation File",
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "filename",
+        "annotation_file"
+      ],
+      "title": "Entry",
+      "type": "object"
+    },
+    "ImageInfo": {
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "pattern": "^[A-Za-z0-9_-]+$",
+          "title": "Id",
+          "type": "string"
+        },
+        "filename": {
+          "pattern": "^[^/\\\\:]+\\.(jpg|jpeg|png|JPG|JPEG|PNG)$",
+          "title": "Filename",
+          "type": "string"
+        },
+        "width": {
+          "exclusiveMinimum": 0,
+          "title": "Width",
+          "type": "integer"
+        },
+        "height": {
+          "exclusiveMinimum": 0,
+          "title": "Height",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "id",
+        "filename",
+        "width",
+        "height"
+      ],
+      "title": "ImageInfo",
+      "type": "object"
+    },
+    "Manifest": {
+      "additionalProperties": false,
+      "properties": {
+        "schema_version": {
+          "const": "1.0",
+          "title": "Schema Version",
+          "type": "string"
+        },
+        "dataset_version": {
+          "minLength": 1,
+          "title": "Dataset Version",
+          "type": "string"
+        },
+        "created_at": {
+          "title": "Created At",
+          "type": "string",
+          "format": "date-time"
+        },
+        "purpose": {
+          "enum": [
+            "ground_truth",
+            "predictions",
+            "unreviewed"
+          ],
+          "title": "Purpose",
+          "type": "string"
+        },
+        "reviewed_image_ids": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Reviewed Image Ids",
+          "type": "array"
+        },
+        "images": {
+          "items": {
+            "$ref": "#/$defs/Entry"
+          },
+          "title": "Images",
+          "type": "array"
+        }
+      },
+      "required": [
+        "schema_version",
+        "dataset_version",
+        "created_at",
+        "purpose",
+        "reviewed_image_ids",
+        "images"
+      ],
+      "title": "Manifest",
+      "type": "object"
+    },
+    "Mite": {
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "minLength": 1,
+          "title": "Id",
+          "type": "string"
+        },
+        "class": {
+          "const": "varroa",
+          "title": "Class",
+          "type": "string"
+        },
+        "x": {
+          "minimum": 0,
+          "title": "X",
+          "type": "number"
+        },
+        "y": {
+          "minimum": 0,
+          "title": "Y",
+          "type": "number"
+        },
+        "bbox": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Box"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "source": {
+          "enum": [
+            "human",
+            "model"
+          ],
+          "title": "Source",
+          "type": "string"
+        },
+        "confidence": {
+          "anyOf": [
+            {
+              "maximum": 1,
+              "minimum": 0,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Confidence"
+        },
+        "model_version": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Model Version"
+        },
+        "reviewed": {
+          "title": "Reviewed",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "id",
+        "class",
+        "x",
+        "y",
+        "source",
+        "confidence",
+        "model_version",
+        "reviewed"
+      ],
+      "title": "Mite",
+      "type": "object",
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "source": {
+                "const": "model"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "confidence": {
+                "type": "number",
+                "minimum": 0,
+                "maximum": 1
+              },
+              "model_version": {
+                "type": "string",
+                "minLength": 1
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "source": {
+                "const": "human"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "reviewed": {
+                "const": true
+              }
+            }
+          }
+        }
+      ]
+    },
+    "ReviewFile": {
+      "additionalProperties": false,
+      "properties": {
+        "schema_version": {
+          "const": "1.0",
+          "title": "Schema Version",
+          "type": "string"
+        },
+        "image_id": {
+          "title": "Image Id",
+          "type": "string"
+        },
+        "model_predictions": {
+          "minimum": 0,
+          "title": "Model Predictions",
+          "type": "integer"
+        },
+        "accepted_unchanged": {
+          "minimum": 0,
+          "title": "Accepted Unchanged",
+          "type": "integer"
+        },
+        "corrected": {
+          "minimum": 0,
+          "title": "Corrected",
+          "type": "integer"
+        },
+        "rejected": {
+          "minimum": 0,
+          "title": "Rejected",
+          "type": "integer"
+        },
+        "manually_added": {
+          "minimum": 0,
+          "title": "Manually Added",
+          "type": "integer"
+        },
+        "final_reviewed_mite_count": {
+          "minimum": 0,
+          "title": "Final Reviewed Mite Count",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "schema_version",
+        "image_id",
+        "model_predictions",
+        "accepted_unchanged",
+        "corrected",
+        "rejected",
+        "manually_added",
+        "final_reviewed_mite_count"
+      ],
+      "title": "ReviewFile",
+      "type": "object"
+    }
+  },
+  "anyOf": [
+    {
+      "$ref": "#/$defs/AnnotationFile"
+    },
+    {
+      "$ref": "#/$defs/Manifest"
+    },
+    {
+      "$ref": "#/$defs/ReviewFile"
+    }
+  ],
+  "$schema": "https://json-schema.org/draft/2020-12/schema"
+}

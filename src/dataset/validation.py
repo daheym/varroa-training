@@ -31,10 +31,14 @@ class LabelingPoint(Point):
     source: Literal["human", "model"]
     confidence: float | None = Field(default=None, ge=0, le=1)
     reviewed: bool
+    model_version: str | None = None
+    bbox: dict | None = None
 
 
 class LabelingDocument(BaseModel):
     model_config = ConfigDict(extra="forbid", strict=True)
+    schema_version: Literal["1.0"] = "1.0"
+    review_complete: bool = False
     image_id: str
     filename: str
     original_width: int = Field(gt=0)
@@ -51,6 +55,13 @@ class LabelingDocument(BaseModel):
 def load_annotation(path, image_path):
     raw = path.read_text(encoding="utf-8")
     payload = json.loads(raw)
+    if isinstance(payload, dict) and "schema_version" in payload and "image" in payload:
+        from src.interchange import validate, AnnotationFile
+        doc = validate(payload, AnnotationFile)
+        if any(not a.reviewed for a in doc.annotations):
+            raise ValueError("Unreviewed predictions cannot become ground truth")
+        return Annotation(image=doc.image.filename, width=doc.image.width, height=doc.image.height,
+                          perspective=doc.perspective, points=[Point(x=a.x, y=a.y) for a in doc.annotations])
     if isinstance(payload, dict) and "image_id" in payload:
         doc = LabelingDocument.model_validate_json(raw)
         if doc.image_id != path.stem or doc.image_id != image_path.stem:
@@ -69,7 +80,14 @@ def validate_dataset(images: Path, annotations: Path, image_id: str | None = Non
     """Collect all errors; never silently treat missing annotations as negatives."""
     config = config or Config()
     records, errors = [], []
+    entries = None
+    if (images.parent / "manifest.json").exists():
+        from src.interchange import load_bundle
+        manifest, _ = load_bundle(images.parent, training=True)
+        entries = {e.filename: e for e in manifest.images}
     files = sorted(p for p in images.iterdir() if p.suffix.lower() in {".jpg", ".jpeg", ".png"}) if images.is_dir() else []
+    if entries is not None:
+        files = [images / filename for filename in entries]
     if image_id is not None:
         files = [path for path in files if path.stem == image_id]
     if not files:
@@ -91,7 +109,7 @@ def validate_dataset(images: Path, annotations: Path, image_id: str | None = Non
             if digest in hashes:
                 raise ValueError("duplicate decoded image content")
             hashes.add(digest)
-            ann_path = annotations / f"{path.stem}.json"
+            ann_path = annotations / (entries[path.name].annotation_file if entries else f"{path.stem}.json")
             ann = load_annotation(ann_path, path)
             if ann.image is not None and ann.image != path.name:
                 raise ValueError("annotation image name differs")
@@ -122,14 +140,14 @@ def validate_dataset(images: Path, annotations: Path, image_id: str | None = Non
                 raise ValueError("duplicate annotation points")
             if any(not (0 <= x < width and 0 <= y < height) for x, y in points):
                 raise ValueError("point outside image bounds")
-            records.append(dict(id=path.stem, image=str(path.resolve()), annotation=str(ann_path.resolve()),
+            records.append(dict(id=entries[path.name].id if entries else path.stem, image=str(path.resolve()), annotation=str(ann_path.resolve()),
                                 original_width=original_width, original_height=original_height,
                                 perspective=perspective, coordinate_space='canonical' if perspective else 'original',
                                 width=width, height=height, points=points, sha256=digest,
                                 annotation_sha256=hashlib.sha256(ann_path.read_bytes()).hexdigest()))
         except (ValueError, OSError, SyntaxError) as exc:
             errors.append(f"{path.name}: {exc}")
-    if annotations.is_dir() and image_id is None:
+    if annotations.is_dir() and image_id is None and entries is None:
         for path in annotations.glob("*.json"):
             if path.stem.casefold() not in stems:
                 errors.append(f"{path.name}: annotation has no source image")

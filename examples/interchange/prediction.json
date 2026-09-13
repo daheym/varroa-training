@@ -1,0 +1,28 @@
+{
+  "schema_version": "1.0",
+  "image": {
+    "id": "image_001",
+    "filename": "image_001.jpg",
+    "width": 4032,
+    "height": 3024
+  },
+  "perspective": null,
+  "annotations": [
+    {
+      "id": "pred_001",
+      "class": "varroa",
+      "x": 1234.5,
+      "y": 987.2,
+      "bbox": {
+        "x": 1218,
+        "y": 975,
+        "width": 33,
+        "height": 24
+      },
+      "source": "model",
+      "confidence": 0.87,
+      "model_version": "varroa-v3",
+      "reviewed": false
+    }
+  ]
+}
