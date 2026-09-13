@@ -70,3 +70,88 @@ def test_changed_source_during_prepare_is_rejected(tmp_path):
     Image.new("RGB", (20, 20), color="red").save(images / "0.png")
     with pytest.raises(ValueError, match="changed during preparation"):
         prepare(config, records=records)
+
+
+def test_device_selection_and_yaml_config(monkeypatch):
+    training = importlib.import_module("src.training.train")
+    import torch
+
+    assert training.resolve_device("cpu") == "cpu"
+    assert training.resolve_device("auto") == ("0" if torch.cuda.is_available() else "cpu")
+    monkeypatch.setattr(torch.cuda, "is_available", lambda: True)
+    monkeypatch.setattr(torch.cuda, "device_count", lambda: 2)
+    assert training.resolve_device("cuda") == "0"
+    assert training.resolve_device("cuda:1") == "1"
+    with pytest.raises(ValueError, match="out of range"):
+        training.resolve_device("2")
+    monkeypatch.setattr(torch.cuda, "is_available", lambda: False)
+    with pytest.raises(RuntimeError, match="CUDA is not available"):
+        training.resolve_device("cuda:0")
+    from src.config import read_config
+    assert read_config("training/configs/varroa.yaml").device == "auto"
+
+
+def test_normal_train_cli_overrides_config(tmp_path, monkeypatch, capsys):
+    cli = importlib.import_module("src.cli")
+    training = importlib.import_module("src.training.train")
+    seen = []
+    monkeypatch.setattr(training, "train", lambda config, output, data=None: seen.append((config, output, data)) or {
+        "evaluation_scope": "ultralytics_validation", "aggregate": {},
+    })
+    dataset_config = tmp_path / "dataset.yaml"
+    cli.main([
+        "train", "--config", "training/configs/varroa.yaml", "--data", str(dataset_config),
+        "--output", str(tmp_path / "run"), "--device", "cpu", "--seed", "7", "--image-size", "320",
+        "--batch-size", "4", "--epochs", "3", "--workers", "2",
+    ])
+    config, output, data = seen[0]
+    assert (config.device, config.seed, config.imgsz, config.batch, config.epochs, config.workers) == ("cpu", 7, 320, 4, 3, 2)
+    assert output == tmp_path / "run" and data == dataset_config
+    assert "ultralytics_validation" in capsys.readouterr().out
+
+
+def test_external_yolo_dataset_uses_shared_training_path(tmp_path, monkeypatch):
+    training = importlib.import_module("src.training.train")
+    images = tmp_path / "dataset" / "images"
+    labels = tmp_path / "dataset" / "labels"
+    for split in ("train", "val"):
+        (images / split).mkdir(parents=True)
+        (labels / split).mkdir(parents=True)
+        Image.new("RGB", (16, 16), color="white").save(images / split / "one.png")
+        (labels / split / "one.txt").write_text("0 0.5 0.5 0.2 0.2\n")
+    data_yaml = tmp_path / "dataset" / "dataset.yaml"
+    data_yaml.write_text(yaml.safe_dump({
+        "path": ".", "train": "images/train", "val": "images/val", "names": {0: "varroa"},
+    }))
+    config = Config(data=data_yaml, processed=tmp_path / "unused", device="cpu", epochs=1)
+    calls = []
+
+    class FakeYOLO:
+        ckpt_path = None
+
+        def __init__(self, weights):
+            calls.append(("init", weights))
+
+        def train(self, **kwargs):
+            calls.append(("train", kwargs))
+            assert kwargs["device"] == "cpu" and kwargs["amp"] is False
+            resolved = yaml.safe_load(Path(kwargs["data"]).read_text())
+            assert Path(resolved["train"]).is_absolute()
+            assert Path(resolved["val"]).is_absolute()
+            weights = Path(kwargs["project"]) / "yolo" / "weights"
+            weights.mkdir(parents=True)
+            (weights / "best.pt").write_bytes(b"best")
+            (weights / "last.pt").write_bytes(b"last")
+            results = Path(kwargs["project"]) / "yolo" / "results.csv"
+            results.write_text("epoch,metrics/precision(B),metrics/recall(B)\n0,0.7,0.6\n")
+
+    monkeypatch.setitem(sys.modules, "ultralytics", SimpleNamespace(YOLO=FakeYOLO))
+    monkeypatch.setattr(training, "evaluate", lambda *args: pytest.fail("external YOLO data has no project manifest"))
+    output = tmp_path / "run"
+    report = training.train(config, output)
+    assert report == {"evaluation_scope": "ultralytics_validation", "aggregate": {"epoch": "0", "metrics/precision(B)": "0.7", "metrics/recall(B)": "0.6"}}
+    assert (output / "config.yaml").exists()
+    assert (output / "data.yaml").exists()
+    metrics = json.loads((output / "metrics.json").read_text())
+    assert metrics["status"] == "complete" and metrics["evaluation_scope"] == "ultralytics_validation"
+    assert (output / "yolo" / "weights" / "best.preprocessing.json").exists()

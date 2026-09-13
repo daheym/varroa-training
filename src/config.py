@@ -3,6 +3,7 @@ from pathlib import Path
 from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
+import yaml
 
 
 class Config(BaseModel):
@@ -12,6 +13,7 @@ class Config(BaseModel):
     annotations: Path = Path("data/annotations")
     processed: Path = Path("data/processed/default")
     splits: Path = Path("data/splits/default.json")
+    data: Path | None = None
     box_size: float = Field(default=32, gt=0)
     box_size_mm: float | None = Field(default=None, gt=0)
     pixels_per_mm: float = Field(default=8, gt=0)
@@ -23,6 +25,8 @@ class Config(BaseModel):
     negative_fraction: float = Field(default=0.25, ge=0, le=1)
     val_fraction: float = Field(default=0.25, gt=0, lt=1)
     seed: int = Field(default=42, ge=0)
+    device: str = "auto"
+    resume: Path | None = None
     model: str = "yolo11n.pt"
     imgsz: int = Field(default=640, ge=32, multiple_of=32)
     batch: int = Field(default=2, gt=0)
@@ -41,7 +45,13 @@ class Config(BaseModel):
 
 
 def read_config(path):
-    payload = json.loads(Path(path).read_text(encoding="utf-8"))
+    path = Path(path)
+    source = path.read_text(encoding="utf-8")
+    payload = json.loads(source) if path.suffix.lower() == ".json" else yaml.safe_load(source)
+    if payload is None:
+        payload = {}
+    if not isinstance(payload, dict):
+        raise ValueError("Configuration file must contain a mapping")
     shared = json.loads((Path(__file__).resolve().parents[1] / 'configs' / 'normalization.json').read_text('utf-8'))
     return Config.model_validate({**{k: shared[k] for k in ('pixels_per_mm', 'min_source_scale_ratio', 'quality_policy')}, **payload})
 

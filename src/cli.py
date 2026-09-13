@@ -2,11 +2,11 @@ import argparse
 import json
 from pathlib import Path
 
-from src.config import read_config
+from src.config import Config, read_config
 
 
 def main(argv=None):
-    parser = argparse.ArgumentParser(description="CPU Varroa detection experiments")
+    parser = argparse.ArgumentParser(description="Varroa detection training and evaluation")
     parser.add_argument("--config", default="configs/default.json", help="Paths in config are relative to the working directory")
     commands = parser.add_subparsers(dest="command", required=True)
     commands.add_parser("validate")
@@ -15,7 +15,18 @@ def main(argv=None):
     sub.add_argument("--run", required=True, type=Path, help="Experiment directory containing evaluation.json")
     for command in ("train", "loo", "overfit"):
         sub = commands.add_parser(command)
-        sub.add_argument("--output", required=True, type=Path, help="New experiment directory")
+        sub.add_argument("--config", default=argparse.SUPPRESS, help="JSON or YAML configuration file")
+        output_help = "Output root (training/train.py creates a run folder inside it)" if command == "train" else "New experiment directory"
+        sub.add_argument("--output", required=True, type=Path, help=output_help)
+        if command == "train":
+            sub.add_argument("--data", type=Path, help="YOLO dataset YAML; defaults to config data or processed/dataset.yaml")
+            sub.add_argument("--device", help="auto, cpu, cuda, cuda:N, or CUDA index (default: config value)")
+            sub.add_argument("--seed", type=int)
+            sub.add_argument("--imgsz", "--image-size", dest="imgsz", type=int)
+            sub.add_argument("--batch", "--batch-size", dest="batch", type=int)
+            sub.add_argument("--epochs", type=int)
+            sub.add_argument("--workers", type=int)
+            sub.add_argument("--resume", type=Path, help="Ultralytics checkpoint with optimizer state, usually last.pt")
         if command == "overfit":
             sub.add_argument("--image-id", help="Source filename stem to use when the input folder contains multiple images")
     sub = commands.add_parser("evaluate")
@@ -45,7 +56,14 @@ def main(argv=None):
         print(json.dumps({"splits": manifest["splits"], "tiles": len(manifest["tiles"])}, indent=2))
     elif args.command == "train":
         from src.training.train import train
-        report = train(config, args.output)
+        overrides = {key: value for key, value in {
+            "data": args.data, "device": args.device, "seed": args.seed,
+            "imgsz": args.imgsz, "batch": args.batch, "epochs": args.epochs,
+            "workers": args.workers, "resume": args.resume,
+        }.items() if value is not None}
+        if overrides:
+            config = Config.model_validate({**config.model_dump(), **overrides})
+        report = train(config, args.output, data=args.data)
         print(json.dumps({"evaluation_scope": report["evaluation_scope"], **report["aggregate"]}, indent=2))
     elif args.command == "overfit":
         from src.training.overfit import overfit_image

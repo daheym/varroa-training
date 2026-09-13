@@ -1,6 +1,6 @@
 # Varroa training
 
-A small Python 3.12 pipeline for asking whether a pretrained YOLO detector can learn Varroa mites from a few annotated original images. Everything runs locally on CPU. Point-derived boxes are temporary supervision, not measured mite outlines.
+A Python 3.12 pipeline for training and evaluating a pretrained YOLO Varroa detector. Training selects CUDA when available and otherwise uses CPU; the original-image annotation and evaluation workflow remains available locally. Point-derived boxes are temporary supervision, not measured mite outlines.
 
 ## Setup
 
@@ -16,7 +16,7 @@ py -3.12 -m venv .venv
 
 If Python is managed by uv, use `uv venv --python 3.12 --seed .venv` for the first command. On Linux use `python3.12 -m venv .venv` and `.venv/bin/python`. Activate the environment to use the shorter `python` and `varroa` commands below. Pretrained weights download on the first run; use a local `.pt` path in `model` for offline runs.
 
-The CPU installation follows [PyTorch's installation guidance](https://pytorch.org/get-started/locally/). Training explicitly uses `device="cpu"`, fixed seeds and deterministic algorithms supported by [Ultralytics training](https://docs.ultralytics.com/modes/train/). Exact numerical reproducibility still depends on software versions and hardware; each experiment saves both.
+The CPU installation follows [PyTorch's installation guidance](https://pytorch.org/get-started/locally/). Training defaults to `device: auto` (CUDA when available, otherwise CPU), supports explicit devices, and records its resolved settings and software versions. Fixed seeds and deterministic algorithms are used; exact numerical reproducibility still depends on software versions and hardware.
 
 `requirements-cpu-win-py312.txt` pins the tested Windows environment. For the same versions, install its pinned `torch`/`torchvision` from the CPU index first, then run `python -m pip install -r requirements-cpu-win-py312.txt` and `python -m pip install -e ".[dev,export]"`.
 
@@ -30,9 +30,11 @@ data/splits/         Original-image split manifests
 configs/             JSON configuration files
 models/              Optional local pretrained/exported models
 runs/                Experiments, metrics, weights and predictions
-scripts/             Training, evaluation, inference and export wrappers
+training/            Canonical train and standalone export entry points
+cloud/kaggle/        Thin Kaggle launcher and setup instructions
+scripts/             Legacy command and evaluation/inference wrappers
 src/dataset/         Validation, geometry, splitting, tiling
-src/training/        CPU training and experiment records
+src/training/        Training and experiment records
 src/evaluation/      Point matching, image counts, leave-one-out
 src/inference/       Full-image prediction, NMS, visualization, ONNX
 tests/               Synthetic unit and pipeline tests
@@ -126,6 +128,27 @@ python -m src.cli --config configs/labeling.json prepare
 python -m src.cli --config configs/labeling.json train --output runs/first
 ```
 
+The same prepared dataset can be trained through the canonical provider-neutral entry point. Its `--output` is a run directory root; it creates a unique `run-<timestamp>` child unless `--run-name` is supplied:
+
+```bash
+python training/train.py \
+  --config configs/labeling.json \
+  --data data/processed/labeling/dataset.yaml \
+  --output runs \
+  --run-name first
+```
+
+For an already labeled YOLO dataset (`images/{train,val}` and `labels/{train,val}`), pass its `dataset.yaml` directly. This route uses Ultralytics validation metrics; the project's original-image point metrics require the generated dataset and manifest above.
+
+```bash
+python training/train.py \
+  --config training/configs/varroa.yaml \
+  --data ./datasets/varroa/dataset.yaml \
+  --output ./runs
+```
+
+The configuration accepts `device: auto`, `cpu`, `cuda`, `cuda:0`, or a CUDA index. CLI values such as `--device`, `--seed`, `--imgsz`, `--batch-size`, `--epochs`, `--workers`, and `--resume` override the config. A resume checkpoint must retain Ultralytics optimizer state, usually an interrupted run's `last.pt`.
+
 For inputs copied into this repository, use `configs/default.json`. Config paths are relative to your working directory. Copy a config and change `processed` and `splits` when preparing a new variant. Preparation refuses existing output data/split files to prevent stale tiles from contaminating a new experiment. Training also requires a new run directory.
 
 Preparation saves the split **before** creating tiles. Every original belongs to exactly one split. It writes:
@@ -160,7 +183,9 @@ All positive tiles are retained. Intersecting boxes are clipped into every tile 
 
 Use a box size representative of mites at your source resolution. Overlap at least as large as the box size helps edge objects appear fully in another tile. NMS can still leave duplicates with low IoU, or merge nearby mites if boxes are too large. Inspect visualizations before interpreting counts.
 
-Each training run stores `metadata.json`, `metrics.json`, `dataset_manifest.json`, `requirements-freeze.txt`, `evaluation.json` and Ultralytics outputs under `yolo/`, including `weights/best.pt` and `weights/last.pt`. Metadata includes status/failures, timestamps, config, software/hardware information and hashes of initial/final weights and the dataset manifest. Epoch metrics and final canonical-image metrics are saved as JSON. Seeds are fixed; mosaic/mixup are disabled for the initial small-data baseline. Normal train/validation runs select the best checkpoint using validation performance, so their scores are exploratory validation scores, not independent test results.
+Each training run stores its resolved `config.yaml`, `data.yaml`, `metadata.json`, `metrics.json`, `requirements-freeze.txt`, and Ultralytics outputs under `yolo/`, including `weights/best.pt`, `weights/last.pt`, CSV logs, and plots. Prepared point-annotation runs also save `dataset_manifest.json` and `evaluation.json`. Metadata records requested/resolved device, versions, seed/config, and relevant hashes. Mosaic/mixup are disabled for the initial small-data baseline. Normal train/validation runs select the best checkpoint using validation performance, so their scores are exploratory validation scores, not independent test results.
+
+For Kaggle setup, the lightweight launcher, GPU instructions, dependency guidance, and artifact locations are in [cloud/kaggle/README.md](cloud/kaggle/README.md). It calls this same training entry point. ONNX export remains a separate step, for example `python training/export.py --checkpoint runs/run-20260913-120000/yolo/weights/best.pt --format onnx`.
 
 ## Evaluate and infer
 

@@ -5,7 +5,7 @@ from src.config import write_json
 from src.training.train import sha256
 
 
-def export_onnx(weights, imgsz=640):
+def export_onnx(weights, imgsz=None):
     from ultralytics import YOLO
     import onnx
 
@@ -13,6 +13,7 @@ def export_onnx(weights, imgsz=640):
     if not contract_path.exists():
         raise ValueError('Export requires a model preprocessing contract')
     contract = json.loads(contract_path.read_text('utf-8'))
+    imgsz = contract['imgsz'] if imgsz is None else imgsz
     if contract['imgsz'] != imgsz:
         raise ValueError('Export imgsz differs from trained preprocessing contract')
     artifact = Path(YOLO(str(weights)).export(format="onnx", device="cpu", imgsz=imgsz, batch=1,
