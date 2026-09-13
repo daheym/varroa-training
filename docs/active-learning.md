@@ -1,11 +1,16 @@
-# File-based active learning (schema 1.0)
+# Continuous active learning with varroa-labeling
 
-The integration contract is **files plus JSON Schema**. Each repository runs independently;
-neither imports the other's implementation. The schema is duplicated at
-`schemas/varroa-annotation-v1.schema.json`. Each repository has local Pydantic models
-and validates incoming and outgoing exchange JSON with that schema. The annotator
-frontend mirrors the contract in TypeScript; its Python API performs runtime validation.
-Update both schema copies together when changing the contract. No shared package is required.
+The normal local cycle combines two integration paths. For interactive work, the labeling
+backend discovers completed compatible runs under `../varroa-training/runs` and starts this
+repository's `src.cli infer` in its own Python environment when you request predictions for
+an image. Reviewed annotations then return to training through a versioned dataset export.
+Training itself is still run here; the labeling app does not start training.
+
+Dataset snapshots and batch inference use the **files plus JSON Schema** contract. The two
+repositories keep local implementations and duplicate
+`schemas/varroa-annotation-v1.schema.json`; update both schema copies together when changing
+that exchange contract. The interactive path additionally depends on the `src.cli infer`
+arguments and preprocessing sidecar staying compatible with the labeling backend.
 
 ## Coordinates and provenance
 
@@ -78,7 +83,94 @@ Keep export and processed directories separate from application data. Use fresh 
 exports and predictions refuse to overwrite existing directories. The manifest is written
 last; treat it as the publication marker. Do not consume a directory while it is being written.
 
-## End-to-end workflow
+## Continuous local cycle (recommended)
+
+This is the shortest path when `varroa-training` and `varroa-labeling` are sibling folders on
+the same machine. The labeling API server must be able to read the training repository and
+its `.venv`. By default it uses `../varroa-training/.venv/Scripts/python.exe` on Windows or
+`../varroa-training/.venv/bin/python` on Linux/macOS. The `VARROA_TRAINING_ROOT` and
+`VARROA_TRAINING_PYTHON` environment variables override those defaults; restart the API after
+changing them.
+
+### Bootstrap the first model
+
+1. In the annotator, physically correct each seed image, add or verify every mite, and click
+   **Finish image review (including empty images)**. The standard holdout preparation needs
+   at least two distinct source images and positive training supervision.
+2. In Dataset exchange, export the completed images as ground truth to a new directory, for
+   example `F:/ImkerApp/exports/reviewed-v001`, with a unique dataset version.
+3. From the `varroa-training` root, import that immutable snapshot and train into new output
+   paths. In Windows PowerShell:
+
+   ```powershell
+   $python = ".\.venv\Scripts\python.exe"
+   $dataset = "F:\ImkerApp\exports\reviewed-v001"
+   & $python scripts\import_dataset.py $dataset --output data\processed\active-001
+   & $python scripts\train.py data\processed\active-001\training-config.json --output runs\active-001
+   ```
+
+   On Linux/macOS, the equivalent commands from this repository root are:
+
+   ```bash
+   ./.venv/bin/python scripts/import_dataset.py /path/to/exports/reviewed-v001 --output data/processed/active-001
+   ./.venv/bin/python scripts/train.py data/processed/active-001/training-config.json --output runs/active-001
+   ```
+
+   Import validates that every image is explicitly reviewed and every retained
+   annotation is reviewed. It creates the tiled dataset, split, manifest and reusable
+   `training-config.json`; the trainer records a new run directly in `runs/active-001`.
+   Choose fresh `data/processed` and `runs` names for every cycle because these commands do
+   not overwrite previous artifacts.
+
+4. Wait for training to finish successfully. The annotator only offers completed runs with
+   their metadata, configuration, checkpoint and preprocessing sidecar intact. Keep the run
+   under this repository's `runs` directory. In the labeling app, enter Model Review mode,
+   click **Refresh model list**, select the new run, and click **Request predictions** on a
+   physically corrected image.
+
+### Add reviewed predictions to the next cycle
+
+1. In Model Review mode, inspect the entire image. Accept correct predictions, drag incorrect
+   ones to the mite center, delete false detections, and add missed mites manually. Then click
+   **Finish image review**. For a genuinely empty image, inspect it and finish the review even
+   when there are no markers. Predictions stay unreviewed until this review is completed.
+2. In Dataset exchange, export completed images as ground truth to a **new** directory and
+   dataset version. Include the earlier reviewed images as well as the newly reviewed images
+   so this is a cumulative training snapshot. Accepted and corrected predictions are now
+   reviewed annotations; rejected predictions are excluded. Incomplete images are not
+   eligible for training export.
+3. Import and train the new snapshot with new output names, for example:
+
+   ```powershell
+   $python = ".\.venv\Scripts\python.exe"
+   $dataset = "F:\ImkerApp\exports\reviewed-v002"
+   & $python scripts\import_dataset.py $dataset --output data\processed\active-002
+   & $python scripts\train.py data\processed\active-002\training-config.json --output runs\active-002
+   ```
+
+   Repeat the review, cumulative export, import and training steps for each cycle. By default,
+   each run initializes from the model configured in the imported training config (normally
+   `yolo11n.pt`) and learns from the full cumulative snapshot. To deliberately warm-start from
+   an earlier detector, set `model` in the new `training-config.json` to that run's
+   `yolo/weights/best.pt` before training. Use a new run output either way; `resume` is for
+   continuing an interrupted run with its optimizer state, not starting a new active-learning
+   cycle.
+
+The model selector only shows runs whose physical-scale settings match the annotator's
+normalization settings. If a completed run does not appear, refresh the list and check the
+training API path, `.venv`, and that `configs/normalization.json` agrees with the labeling
+repository's normalization values (`pixels_per_mm`, `min_source_scale_ratio`, and
+`quality_policy`). Each prediction request requires a current physical perspective correction.
+The request runs on the local API server and persists candidates in the labeling app; there is
+no prediction bundle to export or import for this per-image path. An image accepts only one
+prediction batch at a time, so normal cycles request predictions for new images. To deliberately
+run a new model on an already-predicted image, first preserve its reviewed dataset export, then
+use the annotator's reset action before requesting another batch.
+
+## Batch / portable exchange workflow
+
+Use this route to run predictions over a set of images in one command, or to move datasets
+between machines. For ordinary local, per-image review, use the continuous cycle above.
 
 1. **Annotate images.** Upload JPEG/PNG files in the annotator. Annotate the original
    view directly, or configure physical normalization and annotate the corrected view.
@@ -113,7 +205,7 @@ last; treat it as the publication marker. Do not consume a directory while it is
 6. **Export predictions.** The prediction command runs inference and exports in one step:
 
    ```bash
-   python scripts/predict_dataset.py --dataset ../exports/unreviewed-v1 --model models/varroa-v3.pt --model-version varroa-v3 --config data/processed/v1/training-config.json --output predictions/varroa-v3
+   python scripts/predict_dataset.py --dataset ../exports/unreviewed-v1 --model runs/active-v1/yolo/weights/best.pt --model-version active-v1 --config data/processed/v1/training-config.json --output predictions/active-v1
    ```
 
    Use the actual trained checkpoint path and retain its preprocessing metadata.
@@ -123,7 +215,7 @@ last; treat it as the publication marker. Do not consume a directory while it is
    server path under Dataset exchange and click **Import prediction directory**.
    All members are validated before document changes. Images must already exist with
    matching IDs, filenames and dimensions. No filename-only fuzzy matching is performed.
-8. **Review/correct.** Select Review mode. Amber dashed markers are unreviewed model
+8. **Review/correct.** Select Review mode. Blue dashed markers are unreviewed model
    predictions; green markers are confirmed/human annotations. Select a marker to see
    confidence. Accept selected, drag to correct, delete to reject, and click to add missed
    mites manually. Finish image review explicitly when done. Statistics appear below
@@ -131,7 +223,9 @@ last; treat it as the publication marker. Do not consume a directory while it is
 9. **Export new dataset version.** Choose a fresh directory and version such as
    `2026-09-12-002`. Export completed images, including previously reviewed images
    for a cumulative training set. Rejected predictions are excluded from labels.
-10. **Retrain.**
+10. **Retrain.** For a cumulative next training set, export all reviewed images as in the
+    continuous cycle above, then import into a fresh processed directory and train to a fresh
+    run directory. The batch prediction bundle itself is not a training dataset.
 
     ```bash
     python scripts/import_dataset.py ../exports/varroa-dataset-v2 --output data/processed/v2

@@ -16,7 +16,7 @@ def main(argv=None):
     for command in ("train", "loo", "overfit"):
         sub = commands.add_parser(command)
         sub.add_argument("--config", default=argparse.SUPPRESS, help="JSON or YAML configuration file")
-        output_help = "Output root (training/train.py creates a run folder inside it)" if command == "train" else "New experiment directory"
+        output_help = "New run directory" if command == "train" else "New experiment directory"
         sub.add_argument("--output", required=True, type=Path, help=output_help)
         if command == "train":
             sub.add_argument("--data", type=Path, help="YOLO dataset YAML; defaults to config data or processed/dataset.yaml")

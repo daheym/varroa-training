@@ -236,5 +236,10 @@ Default preparation requires per-image physical dimensions and perspective metad
 
 ## Active-learning interchange
 
-Export reviewed datasets and exchange model predictions through portable or linked directories.
-See [the end-to-end workflow](docs/active-learning.md), [v1 JSON Schema](schemas/varroa-annotation-v1.schema.json), and [example files](examples/interchange).
+For the local continuous cycle, train from a reviewed dataset snapshot here, then use
+**Request predictions** in the sibling `varroa-labeling` app. The app invokes this repository's
+compatible completed run for inference; after review, export a cumulative ground-truth snapshot
+and import it into a new training cycle. Training remains a command run from this repository.
+The [active-learning runbook](docs/active-learning.md) covers the interactive cycle and the
+separate batch/file exchange workflow. See also the [v1 JSON Schema](schemas/varroa-annotation-v1.schema.json)
+and [example files](examples/interchange).
