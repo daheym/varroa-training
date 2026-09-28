@@ -26,7 +26,7 @@ The CPU installation follows [PyTorch's installation guidance](https://pytorch.o
 data/images/         Input JPEG/PNG originals
 data/annotations/    One JSON per image
 data/processed/      Generated YOLO datasets and tile manifests
-data/splits/         Original-image split manifests
+data/splits/         Generated-tile split manifests
 configs/             JSON configuration files
 models/              Optional local pretrained/exported models
 runs/                Experiments, metrics, weights and predictions
@@ -79,9 +79,35 @@ For independently collected data, also accepted is `photo.json` alongside `photo
 
 `image`, `width` and `height` are optional in this compact format. `points` is required, including an explicit empty list for a negative image. The legacy example above requires explicit `allow_legacy_original: true` and its coordinates refer to EXIF-oriented full-resolution pixels, with the top-left at `(0,0)`, `0 <= x < width`, and `0 <= y < height`. Annotations must cover all visible mites: an omitted mite becomes incorrect background supervision.
 
-Validation checks decoding, dimensions, required fields, finite numeric coordinates, bounds, duplicate points/IDs, missing/orphan annotations, duplicate image stems and identical decoded image content. Re-encoded identical pixels cannot cross splits. Similar photographs, bursts or crops are not automatically detected; curate correlated sources together before using this baseline.
+Validation checks decoding, dimensions, required fields, finite numeric coordinates, bounds, duplicate points/IDs, missing/orphan annotations, duplicate image stems and identical decoded image content. Similar photographs, bursts or crops are not automatically detected.
 
 ## Prepare and train
+
+### Next production training run
+
+Run the production launcher from the repository root:
+
+```powershell
+.\scripts\train-production.ps1
+```
+
+The script validates the live labeling data, prepares fresh tiles, and trains for up to
+50 epochs, stopping after 10 epochs without validation improvement. It chooses the next unused name (`training-production-01`,
+`training-production-02`, and so on) and uses that name for the run, processed dataset,
+split manifest, and generated config. This prevents `prepare` from colliding with an
+existing `data/processed/labeling` directory or `data/splits/labeling.json` file.
+
+Override the epoch count or base config when needed:
+
+```powershell
+.\scripts\train-production.ps1 -Epochs 100
+.\scripts\train-production.ps1 -Epochs 100 -Patience 15
+.\scripts\train-production.ps1 -BaseConfig configs/labeling.json -RunPrefix training-production
+```
+
+Generated configs are stored under `runs/.configs/`. `configs/labeling.json` remains the
+source configuration and continues to read images and annotations from the sibling
+`../varroa-labeling` repository.
 
 ### Single-image overfit experiment
 
@@ -101,7 +127,7 @@ The selected image and its annotations are validated and captured in the run man
 
 This uses the linked `data/images` and `data/annotations`, a fresh pretrained `yolo11n.pt`, CPU, 100 epochs, 640-pixel inputs and batch size 2. Edit `configs/overfit.json` to change epochs, input size or pseudo-box size. All positive and negative tiles are retained by this config. Random color and geometric augmentation are disabled for the memorization check. Choose a new output directory for each experiment.
 
-There is **no independent validation set**. The manifest contains one training original and an empty validation split. Ultralytics requires a validation path even with validation disabled, so its internal finalization evaluates training tiles. The experiment uses fixed epochs and `last.pt`, never selects a checkpoint using supposed held-out performance, and computes full-image reconstruction metrics. Both JSON and CLI reports label these as `training_image_reconstruction`; they cannot establish accuracy on unseen images. Ordinary holdout training and leave-one-out still require at least two originals.
+There is **no independent validation set**. The manifest contains one training original and an empty validation split. Ultralytics requires a validation path even with validation disabled, so its internal finalization evaluates training tiles. The experiment uses fixed epochs and `last.pt`, never selects a checkpoint using supposed held-out performance, and computes full-image reconstruction metrics. Both JSON and CLI reports label these as `training_image_reconstruction`; they cannot establish accuracy on unseen images. Tile holdout can use one source when it generates multiple tiles; leave-one-original-out requires at least two originals.
 
 Outputs include:
 
@@ -120,12 +146,10 @@ Repeat reconstruction with the saved run config:
 .\.venv\Scripts\python.exe -m src.cli --config runs/single-image/config.json evaluate --weights runs/single-image/experiment/yolo/weights/last.pt --output runs/single-image/experiment/recheck.json
 ```
 
-### Original-image holdout experiment
+### Tile holdout experiment
 
 ```powershell
-python -m src.cli --config configs/labeling.json validate
-python -m src.cli --config configs/labeling.json prepare
-python -m src.cli --config configs/labeling.json train --output runs/first
+.\scripts\train-production.ps1
 ```
 
 The same prepared dataset can be trained through the canonical provider-neutral entry point. Its `--output` is a run directory root; it creates a unique `run-<timestamp>` child unless `--run-name` is supplied:
@@ -138,7 +162,7 @@ python training/train.py \
   --run-name first
 ```
 
-For an already labeled YOLO dataset (`images/{train,val}` and `labels/{train,val}`), pass its `dataset.yaml` directly. This route uses Ultralytics validation metrics; the project's original-image point metrics require the generated dataset and manifest above.
+For an already labeled YOLO dataset (`images/{train,val}` and `labels/{train,val}`), pass its `dataset.yaml` directly. This route uses Ultralytics validation metrics; the project's generated-tile point metrics require the prepared dataset and manifest above.
 
 ```bash
 python training/train.py \
@@ -147,11 +171,11 @@ python training/train.py \
   --output ./runs
 ```
 
-The configuration accepts `device: auto`, `cpu`, `cuda`, `cuda:0`, or a CUDA index. CLI values such as `--device`, `--seed`, `--imgsz`, `--batch-size`, `--epochs`, `--workers`, and `--resume` override the config. A resume checkpoint must retain Ultralytics optimizer state, usually an interrupted run's `last.pt`.
+The configuration accepts `device: auto`, `cpu`, `cuda`, `cuda:0`, or a CUDA index. CLI values such as `--device`, `--seed`, `--imgsz`, `--batch-size`, `--epochs`, `--patience`, `--workers`, and `--resume` override the config. `patience` is the number of epochs without validation improvement before early stopping; zero disables it. A resume checkpoint must retain Ultralytics optimizer state, usually an interrupted run's `last.pt`.
 
 For inputs copied into this repository, use `configs/default.json`. Config paths are relative to your working directory. Copy a config and change `processed` and `splits` when preparing a new variant. Preparation refuses existing output data/split files to prevent stale tiles from contaminating a new experiment. Training also requires a new run directory.
 
-Preparation saves the split **before** creating tiles. Every original belongs to exactly one split. It writes:
+Preparation generates the tile windows and labels first, then deterministically assigns tile IDs to train or validation. A source image may therefore contribute tiles to both splits. It writes:
 
 ```text
 data/processed/labeling/
@@ -170,20 +194,22 @@ data/processed/labeling/
 | `box_size` | 32 | Square pseudo-box side length in canonical pixels; clipped at image edges |
 | `tile_size` / `overlap` | 640 / 128 | Square tile side and overlap in pixels, `0 <= overlap < tile_size` |
 | `negative_fraction` | 0.25 | Seeded fraction of available negative training tiles retained per original, rounded up; 0 excludes, 1 keeps all |
-| `val_fraction` / `seed` | 0.25 / 42 | Deterministic original split, with at least one train and one validation original |
+| `val_fraction` / `seed` | 0.25 / 42 | Deterministic generated-tile split, with at least one train and one validation tile |
 | `model` | `yolo11n.pt` | Small pretrained detector variant or local checkpoint |
 | `imgsz` / `batch` | 640 / 2 | YOLO input size (multiple of 32) and batch size |
-| `epochs` / `workers` | 20 / 0 | Fixed epoch budget; zero workers is Windows-friendly |
+| `epochs` / `patience` / `workers` | 20 / 10 / 0 | Maximum epochs, early-stopping patience, and worker count; zero workers is Windows-friendly |
 | `confidence` | 0.25 | Inference confidence threshold |
 | `merge_iou` | 0.3 | Tile and global non-maximum suppression threshold |
 | `match_radius` | 16 | Evaluation center-to-point tolerance in canonical pixels |
 | `max_det` | 3000 | Maximum detections per tile; raise for exceptionally dense tiles |
 
-All positive tiles are retained. Intersecting boxes are clipped into every tile they touch, including boxes whose point is just outside a tile. A tile is negative only if no pseudo-box intersects it. Validation retains **all** negative tiles irrespective of `negative_fraction`, and full-image evaluation always processes every tile. Holdout mode requires at least two originals; overfit mode requires exactly one. Both require positive training supervision.
+All positive tiles are retained. Intersecting boxes are clipped into every tile they touch, including boxes whose point is just outside a tile. A tile is negative only if no pseudo-box intersects it. Validation retains **all** negative tiles irrespective of `negative_fraction`. Holdout mode requires at least two generated tiles and positive training supervision; it can use one or more source images. Overfit mode still requires exactly one original.
+
+Because neighboring tiles can overlap, a tile-level split may place shared pixels in both train and validation. Its metrics measure performance on held-out tiles, not generalization to a new photograph. Use leave-one-original-image-out when source-level independence is required.
 
 Use a box size representative of mites at your source resolution. Overlap at least as large as the box size helps edge objects appear fully in another tile. NMS can still leave duplicates with low IoU, or merge nearby mites if boxes are too large. Inspect visualizations before interpreting counts.
 
-Each training run stores its resolved `config.yaml`, `data.yaml`, `metadata.json`, `metrics.json`, `requirements-freeze.txt`, and Ultralytics outputs under `yolo/`, including `weights/best.pt`, `weights/last.pt`, CSV logs, and plots. Prepared point-annotation runs also save `dataset_manifest.json` and `evaluation.json`. Metadata records requested/resolved device, versions, seed/config, and relevant hashes. Mosaic/mixup are disabled for the initial small-data baseline. Normal train/validation runs select the best checkpoint using validation performance, so their scores are exploratory validation scores, not independent test results.
+Each training run stores its resolved `config.yaml`, `data.yaml`, `metadata.json`, `metrics.json`, `requirements-freeze.txt`, and Ultralytics outputs under `yolo/`, including `weights/best.pt`, `weights/last.pt`, CSV logs, and plots. Prepared point-annotation runs also save `dataset_manifest.json` and `evaluation.json`. Metadata records requested/resolved device, versions, seed/config, and relevant hashes. Mosaic/mixup are disabled for the initial small-data baseline. Normal train/validation runs use early stopping and select `weights/best.pt` using validation performance; `last.pt` remains available for resuming. These scores are exploratory validation scores, not independent test results. Overfit and leave-one-original-out protocols intentionally disable early stopping and evaluate `last.pt` after their fixed epoch budget.
 
 For Kaggle setup, the lightweight launcher, GPU instructions, dependency guidance, and artifact locations are in [cloud/kaggle/README.md](cloud/kaggle/README.md). It calls this same training entry point. ONNX export remains a separate step, for example `python training/export.py --checkpoint runs/run-20260913-120000/yolo/weights/best.pt --format onnx`.
 
@@ -206,7 +232,7 @@ python -m src.cli --config configs/labeling.json infer --weights runs/first/yolo
 
 Inference first normalizes the selected physical region, visits every canonical tile, maps boxes to canonical coordinates and applies confidence-ordered global IoU NMS. It prints the final mite count and writes `<output>.json` plus a full-resolution `<output>.png` visualization. Output coordinates and visualization use canonical pixels; inverse-transformed original polygons are included separately. A matching weight preprocessing sidecar is required.
 
-Evaluation runs this same full-image pipeline on validation originals. It matches predicted box centers to annotated points within `match_radius`, one-to-one, maximizing valid matches then minimizing distance. Reports contain TP/FP/FN, precision, recall, F1, true/predicted counts, signed counting error (`predicted - true`) and absolute error per original. Aggregates use micro precision/recall/F1 and count MAE, RMSE and bias. Undefined precision/recall/F1 are reported as zero, including empty/empty cases; counting error is then zero. Full-image point metrics are separate from Ultralytics' tile pseudo-box mAP metrics. Evaluation uses the annotation snapshot saved during preparation and rejects changed source pixels.
+Evaluation predicts the validation tiles and matches predicted box centers to the generated tile-label centers within `match_radius`, one-to-one, maximizing valid matches then minimizing distance. Reports contain TP/FP/FN, precision, recall, F1, true/predicted counts, signed counting error (`predicted - true`) and absolute error per tile. Aggregates use micro precision/recall/F1 and count MAE, RMSE and bias. Undefined precision/recall/F1 are reported as zero, including empty/empty cases; counting error is then zero. Leave-one-original-out and overfit runs retain their full-image evaluation protocols.
 
 ## Leave-one-original-image-out
 

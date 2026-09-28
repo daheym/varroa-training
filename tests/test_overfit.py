@@ -24,7 +24,7 @@ def single_image(tmp_path):
 def test_overfit_has_no_validation_originals_or_tiles(single_image):
     manifest = prepare(single_image)
     assert manifest["mode"] == "overfit"
-    assert manifest["splits"] == {"train": ["single"], "val": []}
+    assert manifest["splits"] == {"train": sorted(t["id"] for t in manifest["tiles"]), "val": []}
     assert all(t["split"] == "train" for t in manifest["tiles"])
     assert any(not t["positive"] for t in manifest["tiles"])
     assert not list((single_image.processed / "images" / "val").iterdir())
@@ -34,11 +34,20 @@ def test_overfit_has_no_validation_originals_or_tiles(single_image):
         check_splits(manifest["splits"], manifest["sources"])
 
 
-def test_single_image_still_rejected_in_normal_mode(single_image):
-    with pytest.raises(ValueError, match="at least two"):
-        prepare(single_image.model_copy(update={"mode": "holdout"}))
+def test_single_image_can_split_tiles_but_not_leave_one_original_out(single_image):
+    manifest = prepare(single_image.model_copy(update={"mode": "holdout"}))
+    assert manifest["splits"]["train"] and manifest["splits"]["val"]
+    assert {tile["source_id"] for tile in manifest["tiles"]} == {"single"}
     with pytest.raises(ValueError, match="holdout mode"):
         leave_one_out(single_image, single_image.processed)
+
+
+def test_holdout_needs_at_least_two_generated_tiles(single_image):
+    config = single_image.model_copy(update={"mode": "holdout", "tile_size": 100, "overlap": 0,
+                                             "processed": single_image.processed.parent / "one-tile",
+                                             "splits": single_image.splits.parent / "one-tile.json"})
+    with pytest.raises(ValueError, match="at least two unique generated tiles"):
+        prepare(config)
 
 
 def test_overfit_rejects_multiple_originals_and_no_positive_labels(single_image):

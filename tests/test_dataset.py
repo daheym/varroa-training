@@ -1,10 +1,11 @@
 import json
+from pathlib import Path
 
 from PIL import Image
 import pytest
 
 from src.config import Config
-from src.dataset.prepare import check_splits, prepare, split_originals
+from src.dataset.prepare import check_splits, prepare, split_originals, split_tiles
 from src.dataset.validation import validate_dataset
 
 
@@ -20,12 +21,16 @@ def dataset(tmp_path):
                   tile_size=10, overlap=2, box_size=4, negative_fraction=0)
 
 
-def test_prepare_has_no_original_leakage_and_preserves_mapping(dataset):
+def test_prepare_splits_generated_tiles_and_preserves_mapping(dataset):
     manifest = prepare(dataset)
-    train = {t["source_id"] for t in manifest["tiles"] if t["split"] == "train"}
-    val = {t["source_id"] for t in manifest["tiles"] if t["split"] == "val"}
-    assert train.isdisjoint(val)
-    assert train | val == {"0", "1", "2"}
+    train_ids = set(manifest["splits"]["train"])
+    val_ids = set(manifest["splits"]["val"])
+    assert manifest["split_unit"] == "tile" and manifest["split_strategy"] == "generated_tiles"
+    assert train_ids.isdisjoint(val_ids)
+    assert train_ids | val_ids == {tile["id"] for tile in manifest["tiles"]}
+    train_sources = {t["source_id"] for t in manifest["tiles"] if t["split"] == "train"}
+    val_sources = {t["source_id"] for t in manifest["tiles"] if t["split"] == "val"}
+    assert train_sources & val_sources  # Source images are deliberately not the split unit.
     assert all(t["positive"] for t in manifest["tiles"] if t["split"] == "train")
     assert any(not t["positive"] for t in manifest["tiles"] if t["split"] == "val")
     for tile in manifest["tiles"]:
@@ -43,6 +48,11 @@ def test_prepare_has_no_original_leakage_and_preserves_mapping(dataset):
 def test_reproducible_splits_and_leave_one_out(dataset):
     records = validate_dataset(dataset.images, dataset.annotations, config=dataset)
     assert split_originals(records) == split_originals(list(reversed(records)))
+    tiles = [{"id": f"tile-{i}", "positive": i < 2} for i in range(8)]
+    assert split_tiles(tiles) == split_tiles(list(reversed(tiles)))
+    tile_split = split_tiles(tiles)
+    check_splits(tile_split, tiles)
+    assert any(tile["id"] in tile_split["train"] and tile["positive"] for tile in tiles)
     held_out_ids = []
     for record in records:
         split = split_originals(records, held_out=record["id"])
@@ -104,3 +114,21 @@ def test_all_negative_tiles_can_be_included(dataset):
     config = dataset.model_copy(update={"negative_fraction": 1.0})
     manifest = prepare(config)
     assert any(not t["positive"] and t["split"] == "train" for t in manifest["tiles"])
+
+
+def test_evaluation_uses_only_validation_tiles(dataset, monkeypatch):
+    from src.evaluation import evaluate as evaluation_module
+
+    manifest = prepare(dataset)
+    calls = []
+
+    def fake_predict(model, image_path, config, perspective=None, normalized=False):
+        calls.append((image_path, normalized))
+        return {"detections": [], "count": 0}
+
+    monkeypatch.setattr(evaluation_module, "predict_image", fake_predict)
+    report = evaluation_module.evaluate(None, manifest, dataset, dataset.processed.parent / "evaluation.json")
+    assert report["evaluation_scope"] == "held_out_tiles"
+    assert {row["tile_id"] for row in report["per_image"]} == set(manifest["splits"]["val"])
+    assert len(calls) == len(manifest["splits"]["val"])
+    assert all(normalized and Path(path).parent.name == "val" for path, normalized in calls)

@@ -130,13 +130,14 @@ def train(config, output, held_out_evaluation=False, data=None):
     if manifest:
         if manifest.get("mode", "holdout") != config.mode:
             raise ValueError("Prepared dataset mode differs from training config")
-        check_splits(manifest["splits"], manifest["sources"], config.mode)
+        check_splits(manifest["splits"], manifest["tiles"], config.mode)
         for key in ("box_size", "tile_size", "overlap", "negative_fraction", "pixels_per_mm", "box_size_mm", "min_source_scale_ratio", "quality_policy", "allow_legacy_original"):
             if manifest["config"][key] != config.model_dump(mode="json")[key]:
                 raise ValueError(f"Prepared dataset config differs: {key}")
     evaluation_scope = (
         "training_image_reconstruction" if overfit
-        else "held_out_originals" if manifest
+        else "held_out_originals" if manifest and manifest.get("split_strategy") == "held_out_source"
+        else "held_out_tiles" if manifest
         else "ultralytics_validation"
     )
     device = resolve_device(config.device)
@@ -186,7 +187,8 @@ def train(config, output, held_out_evaluation=False, data=None):
         options = dict(data=str(data_path), device=device, imgsz=config.imgsz, batch=config.batch,
                        epochs=config.epochs, workers=config.workers, seed=config.seed, deterministic=True,
                        pretrained=True, amp=device != "cpu", project=str(output), name="yolo",
-                       exist_ok=False, val=not (held_out_evaluation or overfit), patience=0,
+                       exist_ok=False, val=not (held_out_evaluation or overfit),
+                       patience=0 if held_out_evaluation or overfit else config.patience,
                        plots=not overfit, save=True, mosaic=0.0, mixup=0.0, erasing=0.0,
                        max_det=config.max_det, **augmentation)
         if config.resume:

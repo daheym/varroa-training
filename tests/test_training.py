@@ -32,7 +32,8 @@ def test_training_cpu_and_checkpoint_protocol(tmp_path, monkeypatch, held_out, m
         def train(self, **kwargs):
             assert kwargs["device"] == "cpu" and kwargs["amp"] is False
             assert kwargs["seed"] == config.seed and kwargs["deterministic"] is True
-            assert kwargs["val"] == (not held_out and mode != "overfit") and kwargs["patience"] == 0
+            assert kwargs["val"] == (not held_out and mode != "overfit")
+            assert kwargs["patience"] == (0 if held_out or mode == "overfit" else config.patience)
             if mode == "overfit":
                 assert all(kwargs[key] == 0 for key in ("hsv_h", "hsv_s", "hsv_v", "translate", "scale", "fliplr", "flipud"))
             data = yaml.safe_load(Path(kwargs["data"]).read_text())
@@ -52,7 +53,7 @@ def test_training_cpu_and_checkpoint_protocol(tmp_path, monkeypatch, held_out, m
     assert metadata["status"] == "complete" and metadata["checkpoint_sha256"]
     assert "training/train.py" in metadata["source_sha256"]
     assert metadata["git_commit"] != "HEAD"
-    assert metadata["evaluation_scope"] == ("training_image_reconstruction" if mode == "overfit" else "held_out_originals")
+    assert metadata["evaluation_scope"] == ("training_image_reconstruction" if mode == "overfit" else "held_out_tiles")
     assert (tmp_path / "run" / "metrics.json").exists()
 
 
@@ -102,10 +103,10 @@ def test_normal_train_cli_overrides_config(tmp_path, monkeypatch, capsys):
     cli.main([
         "train", "--config", "training/configs/varroa.yaml", "--data", str(dataset_config),
         "--output", str(tmp_path / "run"), "--device", "cpu", "--seed", "7", "--image-size", "320",
-        "--batch-size", "4", "--epochs", "3", "--workers", "2",
+        "--batch-size", "4", "--epochs", "3", "--patience", "5", "--workers", "2",
     ])
     config, output, data = seen[0]
-    assert (config.device, config.seed, config.imgsz, config.batch, config.epochs, config.workers) == ("cpu", 7, 320, 4, 3, 2)
+    assert (config.device, config.seed, config.imgsz, config.batch, config.epochs, config.patience, config.workers) == ("cpu", 7, 320, 4, 3, 5, 2)
     assert output == tmp_path / "run" and data == dataset_config
     assert "ultralytics_validation" in capsys.readouterr().out
 

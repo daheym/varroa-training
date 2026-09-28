@@ -31,6 +31,7 @@ class Config(BaseModel):
     imgsz: int = Field(default=640, ge=32, multiple_of=32)
     batch: int = Field(default=2, gt=0)
     epochs: int = Field(default=20, gt=0)
+    patience: int = Field(default=10, ge=0)
     workers: int = Field(default=0, ge=0)
     confidence: float = Field(default=0.25, gt=0, le=1)
     merge_iou: float = Field(default=0.3, gt=0, le=1)

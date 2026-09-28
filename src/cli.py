@@ -25,6 +25,7 @@ def main(argv=None):
             sub.add_argument("--imgsz", "--image-size", dest="imgsz", type=int)
             sub.add_argument("--batch", "--batch-size", dest="batch", type=int)
             sub.add_argument("--epochs", type=int)
+            sub.add_argument("--patience", type=int, help="Epochs without validation improvement before stopping; 0 disables")
             sub.add_argument("--workers", type=int)
             sub.add_argument("--resume", type=Path, help="Ultralytics checkpoint with optimizer state, usually last.pt")
         if command == "overfit":
@@ -53,13 +54,15 @@ def main(argv=None):
     elif args.command == "prepare":
         from src.dataset.prepare import prepare
         manifest = prepare(config)
-        print(json.dumps({"splits": manifest["splits"], "tiles": len(manifest["tiles"])}, indent=2))
+        print(json.dumps({"split_unit": manifest["split_unit"],
+                          "splits": {name: len(ids) for name, ids in manifest["splits"].items()},
+                          "tiles": len(manifest["tiles"])}, indent=2))
     elif args.command == "train":
         from src.training.train import train
         overrides = {key: value for key, value in {
             "data": args.data, "device": args.device, "seed": args.seed,
             "imgsz": args.imgsz, "batch": args.batch, "epochs": args.epochs,
-            "workers": args.workers, "resume": args.resume,
+            "patience": args.patience, "workers": args.workers, "resume": args.resume,
         }.items() if value is not None}
         if overrides:
             config = Config.model_validate({**config.model_dump(), **overrides})

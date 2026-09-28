@@ -2,5 +2,6 @@
   "images": "../varroa-labeling/data/images",
   "annotations": "../varroa-labeling/data/annotations",
   "processed": "data/processed/labeling",
-  "splits": "data/splits/labeling.json"
+  "splits": "data/splits/labeling.json",
+  "patience": 10
 }

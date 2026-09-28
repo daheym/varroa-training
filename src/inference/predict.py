@@ -10,7 +10,7 @@ from src.dataset.perspective import normalize_image, resolve_metadata, transform
 from src.inference.contract import check_model_contract
 
 
-def predict_image(model, image_path, config, perspective=None):
+def predict_image(model, image_path, config, perspective=None, normalized=False):
     if getattr(model, 'ckpt_path', None):
         check_model_contract(model.ckpt_path, config)
     detections = []
@@ -20,7 +20,7 @@ def predict_image(model, image_path, config, perspective=None):
             perspective = resolve_metadata(perspective, *image.size, config.pixels_per_mm,
                 config.min_source_scale_ratio, config.quality_policy)
             image = normalize_image(image, perspective)
-        elif not config.allow_legacy_original:
+        elif not normalized and not config.allow_legacy_original:
             raise ValueError('Physical perspective region required for inference')
         width, height = image.size
         for window in tile_windows(width, height, config.tile_size, config.overlap):
@@ -47,7 +47,7 @@ def predict_image(model, image_path, config, perspective=None):
             detection['original_polygon'] = transform_points([(a,b), (c,b), (c,d), (a,d)], perspective['inverse_homography'])
     return {"image": str(Path(image_path).resolve()), "width": width, "height": height,
             "count": len(merged), "detections": merged, "tile_detection_count": len(detections),
-            "coordinate_space": "canonical" if perspective else "original_exif_oriented",
+            "coordinate_space": "canonical" if perspective or normalized else "original_exif_oriented",
             "perspective": perspective, "config": config.model_dump(mode="json")}
 
 

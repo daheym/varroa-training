@@ -17,6 +17,7 @@ model: yolo11n.pt
 imgsz: 640
 batch: 2
 epochs: 20
+patience: 10
 workers: 0
 confidence: 0.25
 merge_iou: 0.3

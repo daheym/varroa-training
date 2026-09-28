@@ -68,19 +68,34 @@ def visualize_run(run):
     output = run / "visualizations"
     output.mkdir(exist_ok=True)
     scope = report.get("evaluation_scope", "held_out_originals")
-    scope_label = "Training-image reconstruction" if scope == "training_image_reconstruction" else "Held-out originals"
+    scope_label = ("Training-image reconstruction" if scope == "training_image_reconstruction"
+                   else "Held-out tiles" if scope == "held_out_tiles" else "Held-out originals")
     sources = {r["id"]: r for r in manifest["sources"]}
+    tiles = {tile["id"]: tile for tile in manifest["tiles"]}
+    dataset_root = Path(manifest["config"]["processed"]).expanduser().resolve()
     artifacts, errors = [], []
     for result in report["per_image"]:
-        record = sources[result["source_id"]]
-        with Image.open(record["image"]) as source:
-            image = ImageOps.exif_transpose(source).convert("RGB")
-        digest = hashlib.sha256(str(image.size).encode() + image.tobytes()).hexdigest()
-        if digest != record["sha256"]:
-            raise ValueError(f"Source image changed since training: {record['id']}")
-        if record.get("perspective"):
-            image = normalize_image(image, record["perspective"])
-        points, detections = record["points"], result["detections"]
+        if "tile_id" in result:
+            tile = tiles[result["tile_id"]]
+            with Image.open(dataset_root / tile["image"]) as source:
+                image = source.convert("RGB")
+            points = []
+            for line in (dataset_root / tile["label"]).read_text(encoding="utf-8").splitlines():
+                _, x, y, _, _ = map(float, line.split())
+                points.append((x * tile["width"], y * tile["height"]))
+            artifact_id = tile["id"]
+        else:
+            record = sources[result["source_id"]]
+            with Image.open(record["image"]) as source:
+                image = ImageOps.exif_transpose(source).convert("RGB")
+            digest = hashlib.sha256(str(image.size).encode() + image.tobytes()).hexdigest()
+            if digest != record["sha256"]:
+                raise ValueError(f"Source image changed since training: {record['id']}")
+            if record.get("perspective"):
+                image = normalize_image(image, record["perspective"])
+            points = record["points"]
+            artifact_id = record["id"]
+        detections = result["detections"]
         matching = match_detections(points, detections, report["match_radius"])
         if (len(matching["matches"]), len(matching["extra"]), len(matching["missed"])) != (result["tp"], result["fp"], result["fn"]):
             raise ValueError("Saved metrics disagree with reconstructed matching")
@@ -91,7 +106,7 @@ def visualize_run(run):
         fig.suptitle(title, fontsize=14, y=.98)
         fig.text(.5, .025, legend, ha="center", fontsize=8)
         fig.subplots_adjust(left=.01, right=.99, bottom=.055, top=.91)
-        overlay = output / f"{record['id']}-overlay.png"
+        overlay = output / f"{artifact_id}-overlay.png"
         fig.savefig(overlay, dpi=180, facecolor="white")
         plt.close(fig)
         artifacts.append(overlay)
@@ -104,7 +119,9 @@ def visualize_run(run):
             image_errors.append({"type": "extra_prediction", "detection_index": index,
                                  "x": (box[0] + box[2]) / 2, "y": (box[1] + box[3]) / 2,
                                  "confidence": detections[index]["confidence"]})
-        errors.extend({"source_id": record["id"], **error} for error in image_errors)
+        errors.extend({"source_id": result["source_id"],
+                       **({"tile_id": result["tile_id"]} if "tile_id" in result else {}), **error}
+                      for error in image_errors)
         # Paginate dense-error runs instead of constructing unbounded-size figures.
         for start in range(0, len(image_errors), 6):
             page = image_errors[start:start + 6]
@@ -126,7 +143,7 @@ def visualize_run(run):
             fig.suptitle(f"{scope_label}: inspect discrepancies against saved annotations", fontsize=12, y=.99)
             fig.text(.5, .025, legend, ha="center", fontsize=7)
             fig.tight_layout(rect=(0, .06, 1, .9))
-            path = output / f"{record['id']}-errors-{start // 6 + 1}.png"
+            path = output / f"{artifact_id}-errors-{start // 6 + 1}.png"
             fig.savefig(path, dpi=180, facecolor="white")
             plt.close(fig)
             artifacts.append(path)
