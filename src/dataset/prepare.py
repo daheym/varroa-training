@@ -85,6 +85,9 @@ def prepare(config, held_out=None, records=None):
             if (p['quality_policy'], p['min_source_scale_ratio']) != (config.quality_policy, config.min_source_scale_ratio):
                 record['perspective'] = resolve_metadata(p, record['original_width'], record['original_height'],
                     config.pixels_per_mm, config.min_source_scale_ratio, config.quality_policy)
+        # Overview decisions edit labels directly. Legacy quality flags never
+        # remove context tiles or neighboring valid annotations from a dataset.
+        record.pop("quality_exclusions", None)
     root = config.processed.resolve()
     # Never mix old tiles with a new split or configuration.
     if root.exists() and any(root.iterdir()):

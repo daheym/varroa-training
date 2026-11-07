@@ -44,9 +44,13 @@ def test_training_cpu_and_checkpoint_protocol(tmp_path, monkeypatch, held_out, m
             (weights / "last.pt").write_bytes(b"last")
 
     monkeypatch.setitem(sys.modules, "ultralytics", SimpleNamespace(YOLO=FakeYOLO))
-    monkeypatch.setattr(training, "evaluate", lambda *args: {"aggregate": {"f1": 0.0}})
+    inspection = importlib.import_module("src.evaluation.inspection")
+    inspected = []
+    monkeypatch.setattr(training, "evaluate", lambda *args, **kwargs: {"aggregate": {"f1": 0.0}})
+    monkeypatch.setattr(inspection, "build_inspection", lambda run: inspected.append(run))
     result = training.train(config, tmp_path / "run", held_out_evaluation=held_out)
     assert result["aggregate"]["f1"] == 0
+    assert inspected == [(tmp_path / "run").resolve()]
     assert calls[0] == "yolo11n.pt"
     assert Path(calls[-1]).name == ("last.pt" if held_out or mode == "overfit" else "best.pt")
     metadata = json.loads((tmp_path / "run" / "metadata.json").read_text())

@@ -202,7 +202,9 @@ def train(config, output, held_out_evaluation=False, data=None):
             write_json(weights.with_suffix(".preprocessing.json"), preprocessing_contract(config))
         history = _history(output / "yolo" / "results.csv")
         if manifest:
-            report = evaluate(YOLO(str(checkpoint)), manifest, config, output / "evaluation.json")
+            report = evaluate(YOLO(str(checkpoint)), manifest, config, output / "evaluation.json", inspect_training=True)
+            from src.evaluation.inspection import build_inspection
+            build_inspection(output)
             write_json(output / "metrics.json", {"status": "complete", "evaluation_scope": evaluation_scope,
                                                   "evaluation": report["aggregate"], "epochs": history})
         else:

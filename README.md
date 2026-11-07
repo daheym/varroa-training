@@ -215,6 +215,42 @@ For Kaggle setup, the lightweight launcher, GPU instructions, dependency guidanc
 
 ## Evaluate and infer
 
+### Interactive mite overview and quality review
+
+Open **Mite overview** in the sibling Varroa Labeling browser interface. It shows
+one 96px context crop per annotated mite, plus unmatched prediction crops, with
+run, source, result, split and quality filters, adjustable density and enlarged
+details. A mite can belong to both train and validation because tiles overlap.
+Mixed outcomes retain every tile result. Unmatched predictions can repeat across
+overlapping tiles. These are disagreements with annotations, not proof that a label
+or prediction is wrong.
+
+New prepared-data training runs automatically save `inspection/manifest.json`,
+`inspection/crops/*.jpg`, and a portable `inspection/index.html`. They also predict
+training tiles after fitting for inspection. These reconstruction results are stored
+in `evaluation.json` under `training_diagnostics` and never enter validation scores.
+External YOLO datasets without this project's source manifest do not get this overview.
+
+Build an overview for an older completed run without inference or retraining:
+
+```powershell
+.\.venv\Scripts\python.exe -m src.cli inspect --run runs/training-production-04
+```
+
+The labeling tab can also build older overviews. Crops without saved predictions
+are marked **Not evaluated**. The standalone HTML supports filters, enlargement,
+and printing the visible page to PDF. Keep it beside its `crops` directory.
+
+In the labeling tab, **Not a mite — remove label** confirms and deletes just that
+annotation from the live labeled data. The next `prepare` uses those current labels:
+the removed object has no positive target, and neighboring mites and tiles remain
+available. An already completed image review stays complete. A red × in the labeling
+overview reflects the current absence of the label; historical crops and run scores
+remain unchanged. Legacy quality flags in `data/quality_reviews/` are ignored during
+preparation and can be revisited in the labeling app's legacy-flags filter. They are
+not automatically converted into label deletions. Previously prepared datasets and
+run artifacts are unchanged.
+
 Visualize an existing experiment without retraining or running inference again:
 
 ```powershell

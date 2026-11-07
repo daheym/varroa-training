@@ -13,6 +13,8 @@ def main(argv=None):
     commands.add_parser("prepare")
     sub = commands.add_parser("visualize")
     sub.add_argument("--run", required=True, type=Path, help="Experiment directory containing evaluation.json")
+    sub = commands.add_parser("inspect")
+    sub.add_argument("--run", required=True, type=Path, help="Build a mite gallery from saved predictions, without inference")
     for command in ("train", "loo", "overfit"):
         sub = commands.add_parser(command)
         sub.add_argument("--config", default=argparse.SUPPRESS, help="JSON or YAML configuration file")
@@ -41,6 +43,10 @@ def main(argv=None):
     sub = commands.add_parser("export")
     sub.add_argument("--weights", required=True, type=Path)
     args = parser.parse_args(argv)
+    if args.command == "inspect":
+        from src.evaluation.inspection import build_inspection
+        print(build_inspection(args.run))
+        return
     if args.command == "visualize":
         from src.evaluation.visualize import visualize_run
         for path in visualize_run(args.run):

@@ -9,26 +9,29 @@ from src.evaluation.metrics import image_metrics, summarize
 from src.inference.predict import predict_image, save_prediction
 
 
-def evaluate(model, manifest, config, output):
+def evaluate(model, manifest, config, output, inspect_training=False):
     if manifest.get("mode", "holdout") != config.mode:
         raise ValueError("Prepared dataset mode differs from evaluation config")
     check_splits(manifest["splits"], manifest["tiles"], config.mode)
     overfit = config.mode == "overfit"
     rows = []
+    training_rows = []
     if not overfit and manifest.get("split_strategy") == "generated_tiles":
         root = Path(output).parent / "dataset"
         manifest_root = Path(manifest["config"]["processed"]).expanduser().resolve()
         root = manifest_root if (manifest_root / "manifest.json").is_file() else root
         validation_ids = set(manifest["splits"]["val"])
         for tile in manifest["tiles"]:
-            if tile["id"] not in validation_ids:
+            is_validation = tile["id"] in validation_ids
+            if not is_validation and not inspect_training:
                 continue
             prediction = predict_image(model, root / tile["image"], config, normalized=True)
             points = []
             for line in (root / tile["label"]).read_text(encoding="utf-8").splitlines():
                 _, x, y, _, _ = map(float, line.split())
                 points.append((x * tile["width"], y * tile["height"]))
-            rows.append({"tile_id": tile["id"], "source_id": tile["source_id"],
+            (rows if is_validation else training_rows).append({"tile_id": tile["id"], "source_id": tile["source_id"],
+                         "points": points,
                          **image_metrics(points, prediction["detections"], config.match_radius),
                          "detections": prediction["detections"]})
         scope = "held_out_tiles"
@@ -59,5 +62,8 @@ def evaluate(model, manifest, config, output):
     report = {"matching": "one-to-one center distance in prepared-image pixels", "match_radius": config.match_radius,
               "evaluation_scope": scope, "interpretation": interpretation,
               "config": config.model_dump(mode="json"), "per_image": rows, "aggregate": summarize(rows)}
+    if inspect_training:
+        report["training_diagnostics"] = training_rows
+        report["training_diagnostics_interpretation"] = "Training-tile reconstruction only; excluded from validation aggregates."
     write_json(output, report)
     return report

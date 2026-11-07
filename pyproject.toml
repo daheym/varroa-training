@@ -23,5 +23,8 @@ varroa = "src.cli:main"
 [tool.setuptools.packages.find]
 include = ["src*"]
 
+[tool.setuptools.package-data]
+"src.evaluation" = ["inspection.html"]
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
